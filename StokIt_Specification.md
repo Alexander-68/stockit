@@ -1,0 +1,96 @@
+StockIt is a high-performance, self-contained (Asset Bundling) warehouse management app built in Go with UI Layer in HTMX + Tailwind CSS. 
+
+
+
+SQLite persistence (pure Go `modernc.org/sqlite`).
+
+Data is stored as UTF-8.
+
+Startup hardening for service runtimes: `TMPDIR` and `SQLITE\_TMPDIR` are forced to the resolved DB directory.
+
+
+
+Browser login/session notes:
+
+&#x20; - passwords are verified against Argon2id hashes
+
+&#x20; - browser logins use an in-memory opaque session token
+
+&#x20; - sessions expire after 15 minutes of inactivity
+
+&#x20; - at most 5 sessions are active globally; additional login attempts are rejected until one expires or logs out
+
+&#x20; - sessions are stored only in process memory, so all sessions are cleared on restart
+
+&#x20; - API clients may also present the same opaque session token via `Authorization: Bearer`
+
+
+
+\- Web dashboard with embedded assets (no internet required), including bundled favicon files (`.ico` + PNG variants)
+
+\- Web server uses Go's standard-library `net/http` router and handlers
+
+\- Browser write requests are protected against cross-origin submission using Go's standard-library `net/http.CrossOriginProtection`
+
+All (REST) API endpoints require a valid session token (cookie or `Authorization: Bearer`), and a scope according to the role.
+
+Unsafe cross-origin browser requests to Web/API write endpoints are rejected with `403 Forbidden`.
+
+Built-in user/role model with scoped access: admin, user, guest with passwords are stored as Argon2id.
+
+Admin users can modify tables and manage users.
+
+Users can modify tables, no access to users.
+
+Guests can access tables in read-only mode.
+
+Default draft credentials: `admin / admin`, user/user, guest/guest.
+
+Deleting the last admin user is blocked.
+
+
+
+UI:
+
+One browser view - one table.
+
+Minimalistic view, tight layout vertically and horizontally, no decorative elements, no backgrounds, maximum utilizing of the browser view area to present a table. 
+
+Add/Edit form is shown in a popup modal (opens on row click for edit and via `+` for new entry; modal is always dismissible).
+
+Option to import table from CSV.
+
+All tables use lazy loading: initial rows are sized to viewport height plus 50% buffer, then additional rows are loaded on scroll.
+
+All tables supports column sorting: click any column header to sort ascending, click again to toggle descending, active sort column shows a little triangle at the end of the column name to show ascending or descending sorting order.
+
+Dashboard interactions are touch-friendly: table/header taps work without mouse, tables support both horizontal and vertical swipe scrolling, table height auto-fits the current browser viewport, and controls use mobile-safe touch target sizing.
+
+HTMX-like updates without full page refresh.
+
+
+
+Key Database Schema (SQLite): 
+
+* Users Table: usr\_id (unique), usr\_login\_name, usr\_password, usr\_role.
+* Customers: cus\_id (unique), cus\_name\_en, cus\_name\_zh, cus\_address\_en, cus\_address\_zh, cus\_phone, cus\_ship\_address\_en, cus\_ship\_address\_zh, cus\_contact\_name, cust\_contact\_email, Users:usr\_id, cus\_status (active, inactive).
+* Suppliers:  sup\_id (unique), sup\_code, sup\_name\_en, sup\_name\_zh, sup\_type (service,products…), sup\_contact\_name, sup\_contact\_phone, sup\_contact\_email, sup\_contact\_messanger, sup\_fax, sup\_address\_en, sup\_address\_zh, sup\_factory\_adress\_zh, sup\_website, sup\_catalogue\_url, sup\_bank\_name, sup\_bank\_account, sup\_vat\_number, sup\_certificates, sup\_note, Users:usr\_id, sup\_status.
+* Locations: loc\_id (unique), loc\_name, loc\_address\_en, loc\_address\_zh, loc\_zone (storage, assembly, …), Users:usr\_id, loc\_status.
+* Items:  itm\_id (unique), itm\_sku, itm\_model, itm\_description, itm\_value, itm\_type (final, part, assembly), itm\_pic (BLOG), itm\_measure\_unit, Users:usr\_id (who created this item usr\_id), itm\_status (active, inactive).
+* Bill Of Material (BOM): bom\_id(unique), bom\_doc\_number, Items:itm\_id, bom\_note, Users:usr\_id, bom\_status.
+
+  * BOM components: boc\_id, BOM:bom\_id, Items:itm\_id, boc\_qty, boc\_note. (ON DELETE BOM:bom\_id CASCADE)
+
+
+
+Notes: 
+
+* every table contains field created\_at (auto).
+* \_zh suffix means "in Chinese language".
+* In web UI column names are shown "human friendly" without leading prefix: address\_en instead of cus\_address\_en.
+* for status fields: Draft, Under Review, Active, Hold, Phase-Out, Absolete.
+
+
+
+
+
