@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StockIt</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/favicon-16x16.png" type="image/png" sizes="16x16">
+  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
+  <link rel="stylesheet" href="/assets/vendor/tailwind.min.css">
+  <link rel="stylesheet" href="/assets/app/app.css">
+  <script src="/assets/vendor/htmx.min.js" defer></script>
+  <script src="/assets/app/app.js" defer></script>
+</head>
+<body class="h-screen overflow-hidden bg-white text-slate-900">
+  <main class="flex h-screen flex-col">
+    <header class="flex items-center gap-3 border-b border-slate-300 px-3 py-2">
+      <div class="min-w-0">
+        <h1 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-800">StockIt</h1>
+        <p class="truncate text-xs text-slate-500">{{ .User.LoginName }} · {{ .User.Role }}</p>
+      </div>
+      <nav class="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
+        {{ range .Tables }}
+        <button
+          type="button"
+          class="stockit-nav shrink-0 rounded border border-slate-300 px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-700 hover:border-sky-500 hover:text-sky-700"
+          data-table="{{ .Name }}"
+          onclick="StockIt.loadTable('{{ .Name }}')"
+        >{{ .Label }}</button>
+        {{ end }}
+      </nav>
+      <form hx-post="/logout" hx-confirm="Log out?" class="shrink-0">
+        <button class="rounded border border-slate-300 px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-600 hover:border-slate-500 hover:text-slate-900" type="submit">Logout</button>
+      </form>
+    </header>
+
+    <section class="relative flex min-h-0 flex-1 flex-col">
+      <div id="stockit-flash" class="pointer-events-none absolute left-3 right-3 top-3 z-20 hidden rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700"></div>
+      <div id="table-panel" class="flex min-h-0 flex-1 flex-col bg-white"></div>
+    </section>
+  </main>
+
+  <div id="stockit-modal" class="hidden fixed inset-0 z-40 items-center justify-center bg-slate-900/30 px-3 py-3" onclick="StockIt.maybeCloseModal(event)">
+    <div class="stockit-modal-shell max-h-full w-full max-w-3xl overflow-auto rounded border border-slate-300 bg-white shadow-xl">
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", function () {
+      StockIt.boot("{{ .DefaultTable }}");
+    });
+  </script>
+</body>
+</html>

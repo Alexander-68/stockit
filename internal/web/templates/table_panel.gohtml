@@ -1,0 +1,63 @@
+<section
+  class="flex min-h-0 flex-1 flex-col"
+  data-stockit-panel
+  data-table="{{ .Table.Name }}"
+  data-sort="{{ .Sort }}"
+  data-desc="{{ if .Desc }}true{{ else }}false{{ end }}"
+  data-limit="{{ .Limit }}"
+  data-offset="{{ .RowCount }}"
+  data-has-more="{{ if .HasMore }}true{{ else }}false{{ end }}"
+  data-can-write="{{ if .CanWrite }}true{{ else }}false{{ end }}"
+>
+  <div class="flex flex-wrap items-center gap-2 border-b border-slate-300 px-3 py-2">
+    <div class="min-w-0 flex-1">
+      <h2 class="truncate text-sm font-semibold uppercase tracking-[0.16em] text-slate-700">{{ .Table.Label }}</h2>
+      <p class="truncate text-xs text-slate-500">{{ if .CanWrite }}Tap a row to edit.{{ else }}Read-only access.{{ end }}</p>
+    </div>
+    {{ if .CanWrite }}
+    <button class="rounded border border-sky-600 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700 hover:bg-sky-50" type="button" onclick="StockIt.openForm('{{ .Table.Name }}')">+</button>
+    {{ end }}
+    {{ if .CanImport }}
+    <form
+      class="flex flex-wrap items-center gap-2"
+      hx-post="/tables/{{ .Table.Name }}/import"
+      hx-target="#table-messages"
+      hx-encoding="multipart/form-data"
+      enctype="multipart/form-data"
+    >
+      <input class="block max-w-[14rem] text-xs" type="file" name="csv_file" accept=".csv,text/csv" required>
+      <button class="rounded border border-slate-300 px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-700 hover:border-slate-500" type="submit">Import CSV</button>
+    </form>
+    {{ end }}
+  </div>
+
+  <div id="table-messages" class="px-3 py-2"></div>
+
+  <div class="stockit-table-wrap min-h-0 flex-1 overflow-auto">
+    <table class="min-w-full border-collapse text-xs">
+      <thead class="sticky top-0 z-10 bg-slate-50">
+        <tr>
+          {{ range .Headers }}
+          <th class="border-b border-slate-300 px-2 py-2 text-left font-semibold uppercase tracking-wide text-slate-600">
+            <button class="inline-flex items-center gap-1 hover:text-sky-700" type="button" onclick="StockIt.sortTable('{{ .Column }}')">
+              <span>{{ .Label }}</span>
+              {{ if .Active }}
+              <span aria-hidden="true">{{ if .Desc }}▼{{ else }}▲{{ end }}</span>
+              {{ end }}
+            </button>
+          </th>
+          {{ end }}
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        {{ if .Rows }}
+          {{ template "table_rows.gohtml" .Rows }}
+        {{ else }}
+          <tr>
+            <td class="px-3 py-4 text-slate-500" colspan="{{ len .Headers }}">No records yet.</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</section>

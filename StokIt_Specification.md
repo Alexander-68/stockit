@@ -8,6 +8,12 @@ Data is stored as UTF-8.
 
 Startup hardening for service runtimes: `TMPDIR` and `SQLITE\_TMPDIR` are forced to the resolved DB directory.
 
+Startup/runtime note:
+
+ - on startup, the process logs the effective listen address, configured DB path, resolved DB path, working directory, and effective `TMPDIR` / `SQLITE_TMPDIR`
+
+ - interactive termination via `Ctrl-C` must gracefully stop the HTTP server and exit the process cleanly
+
 
 
 Browser login/session notes:

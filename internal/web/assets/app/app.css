@@ -1,0 +1,44 @@
+html,
+body {
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+}
+
+.stockit-table-wrap {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+.stockit-table-wrap table {
+  min-width: max-content;
+}
+
+.stockit-modal-shell {
+  width: min(960px, 100%);
+}
+
+th,
+td {
+  white-space: nowrap;
+}
+
+textarea,
+input,
+select,
+button {
+  min-height: 2.5rem;
+}
+
+@media (max-width: 768px) {
+  .stockit-nav {
+    min-height: 2.75rem;
+  }
+
+  th,
+  td {
+    font-size: 0.7rem;
+  }
+}

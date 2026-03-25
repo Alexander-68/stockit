@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StockIt Login</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/favicon-16x16.png" type="image/png" sizes="16x16">
+  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
+  <link rel="stylesheet" href="/assets/vendor/tailwind.min.css">
+  <link rel="stylesheet" href="/assets/app/app.css">
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-900">
+  <main class="mx-auto flex min-h-screen max-w-md items-center px-4">
+    <section class="w-full rounded border border-slate-300 bg-white p-6 shadow-sm">
+      <header class="mb-5">
+        <h1 class="text-xl font-semibold tracking-tight">StockIt</h1>
+        <p class="mt-1 text-sm text-slate-600">Warehouse management app</p>
+      </header>
+      {{ if .Error }}
+      <div class="mb-4 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{{ .Error }}</div>
+      {{ end }}
+      <form method="post" action="/login" class="space-y-4">
+        <label class="block text-sm font-medium text-slate-700">
+          Login
+          <input class="mt-1 block w-full rounded border border-slate-300 px-3 py-2" type="text" name="login_name" autocomplete="username" required autofocus>
+        </label>
+        <label class="block text-sm font-medium text-slate-700">
+          Password
+          <input class="mt-1 block w-full rounded border border-slate-300 px-3 py-2" type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button class="inline-flex w-full items-center justify-center rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700" type="submit">Sign In</button>
+      </form>
+      <div class="mt-5 border-t border-slate-200 pt-4 text-xs text-slate-500">
+        Default credentials: admin/admin, user/user, guest/guest.
+      </div>
+    </section>
+  </main>
+</body>
+</html>
