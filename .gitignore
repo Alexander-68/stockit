@@ -1,0 +1,16 @@
+# SQLite runtime artifacts
+/.datastockit.db
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
+/data/*.db-journal
+
+# Generated review/test database outputs
+/testdata/review-db/*.db
+/testdata/review-db/*.db-shm
+/testdata/review-db/*.db-wal
+/testdata/review-db/*.db-journal
+/internal/app/testdata/review-db/*.db
+/internal/app/testdata/review-db/*.db-shm
+/internal/app/testdata/review-db/*.db-wal
+/internal/app/testdata/review-db/*.db-journal
