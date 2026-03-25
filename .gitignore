@@ -14,3 +14,6 @@
 /internal/app/testdata/review-db/*.db-shm
 /internal/app/testdata/review-db/*.db-wal
 /internal/app/testdata/review-db/*.db-journal
+
+# Generated backup files with numeric suffixes
+*.go.[0-9]*
