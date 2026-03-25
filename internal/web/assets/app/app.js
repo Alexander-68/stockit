@@ -23,10 +23,7 @@
 
   function updateNav(table) {
     document.querySelectorAll(".stockit-nav").forEach(function (button) {
-      const active = button.dataset.table === table;
-      button.classList.toggle("border-sky-600", active);
-      button.classList.toggle("text-sky-700", active);
-      button.classList.toggle("bg-sky-50", active);
+      button.classList.toggle("is-active", button.dataset.table === table);
     });
   }
 
@@ -37,6 +34,16 @@
   function currentTable() {
     const panel = currentPanel();
     return panel ? panel.dataset.table : "";
+  }
+
+  function clearSelectedRow() {
+    const panel = currentPanel();
+    if (!panel) {
+      return;
+    }
+    panel.querySelectorAll(".stockit-row.is-selected").forEach(function (row) {
+      row.classList.remove("is-selected");
+    });
   }
 
   function loadTable(table, options) {
@@ -137,6 +144,10 @@
   }
 
   function openForm(table, id) {
+    if (!id) {
+      clearSelectedRow();
+    }
+
     let url = "/tables/" + table + "/form";
     if (id) {
       url += "?id=" + encodeURIComponent(id);
@@ -149,6 +160,8 @@
     if (!panel || panel.dataset.canWrite !== "true") {
       return;
     }
+    clearSelectedRow();
+    row.classList.add("is-selected");
     openForm(panel.dataset.table, row.dataset.rowId);
   }
 
@@ -168,6 +181,7 @@
       return;
     }
     body.innerHTML = "";
+    clearSelectedRow();
     modal.classList.add("hidden");
     modal.classList.remove("flex");
   }
@@ -196,12 +210,8 @@
     }
 
     flash.textContent = message;
-    flash.classList.remove("hidden", "border-red-200", "bg-red-50", "text-red-700", "border-sky-200", "bg-sky-50", "text-sky-700");
-    if (kind === "error") {
-      flash.classList.add("border-red-200", "bg-red-50", "text-red-700");
-    } else {
-      flash.classList.add("border-sky-200", "bg-sky-50", "text-sky-700");
-    }
+    flash.classList.remove("hidden", "is-error");
+    flash.classList.toggle("is-error", kind === "error");
 
     if (state.flashTimer) {
       clearTimeout(state.flashTimer);

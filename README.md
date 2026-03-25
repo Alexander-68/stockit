@@ -35,6 +35,7 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - viewport-sized initial row loading plus scroll-based lazy loading
   - modal create/edit forms
   - CSV import per writable table
+  - modern light glass-style visual system with compact premium surfaces and restrained motion
 - Built-in role rules:
   - `admin`: manage all tables and users
   - `user`: manage non-user tables
@@ -47,6 +48,7 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
 
 - SQLite temp directories are forced to the resolved database directory through `TMPDIR` and `SQLITE_TMPDIR` during startup.
 - User password hashes are never returned by the generic UI/API table readers.
+- The current UI direction is intentionally sleek and modern while preserving dense table-first workflows; it uses subtle gradients, layered light surfaces, and stronger active/focus states instead of the original bare prototype styling.
 - Status fields currently use a combined option set from the specification text:
   - `Draft`
   - `Under Review`

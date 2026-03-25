@@ -25,6 +25,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve db path: %v", err)
 	}
+	if err := configureSQLiteTempDir(resolvedDBPath); err != nil {
+		log.Fatalf("configure sqlite temp dir: %v", err)
+	}
 
 	log.Printf("StockIt starting addr=%s db=%s resolved_db=%s cwd=%s", *addr, *dbPath, resolvedDBPath, cwd)
 
@@ -55,4 +58,18 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("StockIt stopped")
+}
+
+func configureSQLiteTempDir(resolvedDBPath string) error {
+	dbDir := filepath.Dir(resolvedDBPath)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.Setenv("TMPDIR", dbDir); err != nil {
+		return err
+	}
+	if err := os.Setenv("SQLITE_TMPDIR", dbDir); err != nil {
+		return err
+	}
+	return nil
 }

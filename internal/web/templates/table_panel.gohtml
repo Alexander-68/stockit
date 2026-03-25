@@ -1,5 +1,5 @@
 <section
-  class="flex min-h-0 flex-1 flex-col"
+  class="stockit-panel flex min-h-0 flex-1 flex-col"
   data-stockit-panel
   data-table="{{ .Table.Name }}"
   data-sort="{{ .Sort }}"
@@ -9,40 +9,43 @@
   data-has-more="{{ if .HasMore }}true{{ else }}false{{ end }}"
   data-can-write="{{ if .CanWrite }}true{{ else }}false{{ end }}"
 >
-  <div class="flex flex-wrap items-center gap-2 border-b border-slate-300 px-3 py-2">
+  <div class="stockit-toolbar flex flex-wrap items-center gap-3">
     <div class="min-w-0 flex-1">
-      <h2 class="truncate text-sm font-semibold uppercase tracking-[0.16em] text-slate-700">{{ .Table.Label }}</h2>
-      <p class="truncate text-xs text-slate-500">{{ if .CanWrite }}Tap a row to edit.{{ else }}Read-only access.{{ end }}</p>
+      <p class="stockit-toolbar-eyebrow">Active Table</p>
+      <h2 class="truncate text-lg font-semibold tracking-tight text-slate-950">{{ .Table.Label }}</h2>
+      <p class="truncate text-sm text-slate-500">{{ if .CanWrite }}Tap a row to edit or create a new record.{{ else }}Read-only access with live scrolling and sorting.{{ end }}</p>
     </div>
-    {{ if .CanWrite }}
-    <button class="rounded border border-sky-600 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700 hover:bg-sky-50" type="button" onclick="StockIt.openForm('{{ .Table.Name }}')">+</button>
-    {{ end }}
-    {{ if .CanImport }}
-    <form
-      class="flex flex-wrap items-center gap-2"
-      hx-post="/tables/{{ .Table.Name }}/import"
-      hx-target="#table-messages"
-      hx-encoding="multipart/form-data"
-      enctype="multipart/form-data"
-    >
-      <input class="block max-w-[14rem] text-xs" type="file" name="csv_file" accept=".csv,text/csv" required>
-      <button class="rounded border border-slate-300 px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-700 hover:border-slate-500" type="submit">Import CSV</button>
-    </form>
-    {{ end }}
+    <div class="stockit-toolbar-actions flex flex-wrap items-center gap-2">
+      {{ if .CanWrite }}
+      <button class="stockit-button stockit-button-primary" type="button" onclick="StockIt.openForm('{{ .Table.Name }}')">New Record</button>
+      {{ end }}
+      {{ if .CanImport }}
+      <form
+        class="flex flex-wrap items-center gap-2"
+        hx-post="/tables/{{ .Table.Name }}/import"
+        hx-target="#table-messages"
+        hx-encoding="multipart/form-data"
+        enctype="multipart/form-data"
+      >
+        <input class="stockit-file-input block max-w-[16rem] text-xs" type="file" name="csv_file" accept=".csv,text/csv" required>
+        <button class="stockit-button stockit-button-secondary" type="submit">Import CSV</button>
+      </form>
+      {{ end }}
+    </div>
   </div>
 
-  <div id="table-messages" class="px-3 py-2"></div>
+  <div id="table-messages" class="stockit-messages px-4 py-3"></div>
 
   <div class="stockit-table-wrap min-h-0 flex-1 overflow-auto">
-    <table class="min-w-full border-collapse text-xs">
-      <thead class="sticky top-0 z-10 bg-slate-50">
+    <table class="stockit-table min-w-full">
+      <thead class="stockit-table-head sticky top-0 z-10">
         <tr>
           {{ range .Headers }}
-          <th class="border-b border-slate-300 px-2 py-2 text-left font-semibold uppercase tracking-wide text-slate-600">
-            <button class="inline-flex items-center gap-1 hover:text-sky-700" type="button" onclick="StockIt.sortTable('{{ .Column }}')">
+          <th class="stockit-table-header">
+            <button class="stockit-sort-button inline-flex items-center gap-1" type="button" onclick="StockIt.sortTable('{{ .Column }}')">
               <span>{{ .Label }}</span>
               {{ if .Active }}
-              <span aria-hidden="true">{{ if .Desc }}▼{{ else }}▲{{ end }}</span>
+              <span class="stockit-sort-indicator" aria-hidden="true">{{ if .Desc }}▼{{ else }}▲{{ end }}</span>
               {{ end }}
             </button>
           </th>
@@ -54,7 +57,7 @@
           {{ template "table_rows.gohtml" .Rows }}
         {{ else }}
           <tr>
-            <td class="px-3 py-4 text-slate-500" colspan="{{ len .Headers }}">No records yet.</td>
+            <td class="stockit-empty-state px-4 py-8 text-slate-500" colspan="{{ len .Headers }}">No records yet.</td>
           </tr>
         {{ end }}
       </tbody>

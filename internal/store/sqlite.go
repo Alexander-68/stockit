@@ -58,13 +58,6 @@ func Open(ctx context.Context, dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
 
-	if err := os.Setenv("TMPDIR", dbDir); err != nil {
-		return nil, fmt.Errorf("set TMPDIR: %w", err)
-	}
-	if err := os.Setenv("SQLITE_TMPDIR", dbDir); err != nil {
-		return nil, fmt.Errorf("set SQLITE_TMPDIR: %w", err)
-	}
-
 	db, err := sql.Open("sqlite", resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -97,6 +98,22 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	}
 	if len(components.Rows) != 0 {
 		t.Fatalf("expected bom components to cascade delete, got %+v", components.Rows)
+	}
+}
+
+func TestOpenDoesNotMutateProcessTempEnvironment(t *testing.T) {
+	sentinelDir := t.TempDir()
+	t.Setenv("TMPDIR", sentinelDir)
+	t.Setenv("SQLITE_TMPDIR", sentinelDir)
+
+	s := openTestStore(t)
+	defer func() { _ = s.Close() }()
+
+	if got := os.Getenv("TMPDIR"); got != sentinelDir {
+		t.Fatalf("TMPDIR = %q, want %q", got, sentinelDir)
+	}
+	if got := os.Getenv("SQLITE_TMPDIR"); got != sentinelDir {
+		t.Fatalf("SQLITE_TMPDIR = %q, want %q", got, sentinelDir)
 	}
 }
 

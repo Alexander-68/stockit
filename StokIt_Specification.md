@@ -60,9 +60,11 @@ UI:
 
 One browser view - one table.
 
-Minimalistic view, tight layout vertically and horizontally, no decorative elements, no backgrounds, maximum utilizing of the browser view area to present a table. 
+Modern, sleek, still minimalistic light UI with tight vertical and horizontal density. The app should use subtle layered surfaces, restrained gradients/background glow, refined typography, and soft shadows to feel like a polished warehouse control surface without wasting table space.
 
-Add/Edit form is shown in a popup modal (opens on row click for edit and via `+` for new entry; modal is always dismissible).
+The dashboard header and active table shell should look premium but compact: glass-like/lightweight surfaces are acceptable, as long as the table remains the primary focus and the viewport is still used efficiently.
+
+Add/Edit form is shown in a popup modal (opens on row click for edit and via a primary new-record action for new entry; modal is always dismissible).
 
 Option to import table from CSV.
 
@@ -71,6 +73,8 @@ All tables use lazy loading: initial rows are sized to viewport height plus 50% 
 All tables supports column sorting: click any column header to sort ascending, click again to toggle descending, active sort column shows a little triangle at the end of the column name to show ascending or descending sorting order.
 
 Dashboard interactions are touch-friendly: table/header taps work without mouse, tables support both horizontal and vertical swipe scrolling, table height auto-fits the current browser viewport, and controls use mobile-safe touch target sizing.
+
+Interactive states should be clear but restrained: active navigation tabs, hovered rows, selected rows, focused form fields, and primary/destructive actions must be visually distinct without becoming visually noisy.
 
 HTMX-like updates without full page refresh.
 
@@ -95,8 +99,3 @@ Notes:
 * \_zh suffix means "in Chinese language".
 * In web UI column names are shown "human friendly" without leading prefix: address\_en instead of cus\_address\_en.
 * for status fields: Draft, Under Review, Active, Hold, Phase-Out, Absolete.
-
-
-
-
-
