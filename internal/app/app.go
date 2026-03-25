@@ -57,18 +57,22 @@ type dashboardPageData struct {
 }
 
 type tablePanelData struct {
-	User      Principal
-	Table     store.TableDef
-	Headers   []tableHeaderView
-	Rows      []tableRowView
-	CanWrite  bool
-	Sort      string
-	Desc      bool
-	Limit     int
-	HasMore   bool
-	RowCount  int
-	Message   string
-	CanImport bool
+	User       Principal
+	Table      store.TableDef
+	NavTable   string
+	Headers    []tableHeaderView
+	Rows       []tableRowView
+	Parent     *parentContextView
+	ChildTable string
+	ChildField string
+	CanWrite   bool
+	Sort       string
+	Desc       bool
+	Limit      int
+	HasMore    bool
+	RowCount   int
+	Message    string
+	CanImport  bool
 }
 
 type tableHeaderView struct {
@@ -79,25 +83,53 @@ type tableHeaderView struct {
 }
 
 type tableRowView struct {
-	ID    string
-	Cells []string
+	ID            string
+	Cells         []string
+	DeleteConfirm string
+}
+
+type parentContextView struct {
+	TableName  string
+	TableLabel string
+	RowID      string
+	Field      string
+	Label      string
+	Title      string
+	Summary    []parentFieldView
+	CanWrite   bool
+}
+
+type parentFieldView struct {
+	Label string
+	Value string
+}
+
+type parentContext struct {
+	Table    store.TableDef
+	Row      map[string]any
+	RowID    string
+	Field    string
+	Label    string
+	ParsedID any
 }
 
 type formData struct {
-	Table      store.TableDef
-	User       Principal
-	Fields     []formFieldView
-	RowID      string
-	Error      string
-	CanDelete  bool
-	SubmitPath string
-	DeletePath string
+	Table                store.TableDef
+	User                 Principal
+	Parent               *parentContextView
+	Fields               []formFieldView
+	RowID                string
+	Error                string
+	CanDelete            bool
+	SubmitPath           string
+	DeletePath           string
+	DeleteConfirmMessage string
 }
 
 type formFieldView struct {
 	Column      string
 	Label       string
-	Kind        store.FieldKind
+	Kind        string
 	Value       string
 	Required    bool
 	Options     []store.Option
@@ -306,15 +338,33 @@ func (s *Server) handleTablePanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	parentCtx, status, err := s.resolveParentContext(
+		r.Context(),
+		principal.Role,
+		table,
+		strings.TrimSpace(r.URL.Query().Get("parent_table")),
+		strings.TrimSpace(r.URL.Query().Get("parent_id")),
+		strings.TrimSpace(r.URL.Query().Get("parent_field")),
+	)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+
 	limit := viewportLimit(r)
 	sortColumn := table.SortColumn(r.URL.Query().Get("sort"))
 	desc := parseBool(r.URL.Query().Get("desc"))
 
-	result, err := s.store.List(r.Context(), table.Name, store.ListOptions{
+	listOptions := store.ListOptions{
 		Sort:  sortColumn,
 		Desc:  desc,
 		Limit: limit,
-	})
+	}
+	if parentCtx != nil {
+		listOptions.Filter = map[string]any{parentCtx.Field: parentCtx.ParsedID}
+	}
+
+	result, err := s.store.List(r.Context(), table.Name, listOptions)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -323,8 +373,9 @@ func (s *Server) handleTablePanel(w http.ResponseWriter, r *http.Request) {
 	data := tablePanelData{
 		User:      principal,
 		Table:     table,
+		NavTable:  table.Name,
 		Headers:   buildHeaders(table, sortColumn, desc),
-		Rows:      buildRows(table, result.Rows),
+		Rows:      nil,
 		CanWrite:  table.CanWrite(principal.Role),
 		Sort:      sortColumn,
 		Desc:      desc,
@@ -332,6 +383,28 @@ func (s *Server) handleTablePanel(w http.ResponseWriter, r *http.Request) {
 		HasMore:   result.HasMore,
 		RowCount:  len(result.Rows),
 		CanImport: table.ImportEnabled && table.CanWrite(principal.Role),
+	}
+	rows, err := s.buildRows(r.Context(), table, result.Rows)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.Rows = rows
+	if parentCtx != nil {
+		parentView, err := s.buildParentContextView(r.Context(), parentCtx, principal.Role)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		data.Parent = &parentView
+		data.NavTable = parentCtx.Table.Name
+	}
+	if table.Subtable != nil {
+		childTable, ok := s.store.Table(table.Subtable.Table)
+		if ok && childTable.CanRead(principal.Role) {
+			data.ChildTable = childTable.Name
+			data.ChildField = table.Subtable.ForeignKey
+		}
 	}
 	s.render(w, "table_panel.gohtml", data)
 }
@@ -343,26 +416,62 @@ func (s *Server) handleTableRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	parentCtx, status, err := s.resolveParentContext(
+		r.Context(),
+		principal.Role,
+		table,
+		strings.TrimSpace(r.URL.Query().Get("parent_table")),
+		strings.TrimSpace(r.URL.Query().Get("parent_id")),
+		strings.TrimSpace(r.URL.Query().Get("parent_field")),
+	)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	result, err := s.store.List(r.Context(), table.Name, store.ListOptions{
+	listOptions := store.ListOptions{
 		Sort:   table.SortColumn(r.URL.Query().Get("sort")),
 		Desc:   parseBool(r.URL.Query().Get("desc")),
 		Limit:  viewportLimit(r),
 		Offset: offset,
-	})
+	}
+	if parentCtx != nil {
+		listOptions.Filter = map[string]any{parentCtx.Field: parentCtx.ParsedID}
+	}
+
+	result, err := s.store.List(r.Context(), table.Name, listOptions)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("X-Has-More", strconv.FormatBool(result.HasMore))
-	s.render(w, "table_rows.gohtml", buildRows(table, result.Rows))
+	rows, err := s.buildRows(r.Context(), table, result.Rows)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "table_rows.gohtml", rows)
 }
 
 func (s *Server) handleTableForm(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	table, ok := s.authorizeTable(w, r, principal.Role, true)
 	if !ok {
+		return
+	}
+
+	parentCtx, status, err := s.resolveParentContext(
+		r.Context(),
+		principal.Role,
+		table,
+		strings.TrimSpace(r.URL.Query().Get("parent_table")),
+		strings.TrimSpace(r.URL.Query().Get("parent_id")),
+		strings.TrimSpace(r.URL.Query().Get("parent_field")),
+	)
+	if err != nil {
+		http.Error(w, err.Error(), status)
 		return
 	}
 
@@ -381,7 +490,7 @@ func (s *Server) handleTableForm(w http.ResponseWriter, r *http.Request) {
 		row = record
 	}
 
-	data, err := s.buildFormData(r.Context(), principal, table, rowID, row, "")
+	data, err := s.buildFormData(r.Context(), principal, table, rowID, row, parentCtx, "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -396,26 +505,50 @@ func (s *Server) handleTableSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(16 << 20); err != nil {
-		s.renderFormError(w, r, principal, table, "", nil, "Invalid form payload.")
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(16 << 20); err != nil {
+			s.renderFormError(w, r, principal, table, "", nil, nil, "Invalid form payload.")
+			return
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			s.renderFormError(w, r, principal, table, "", nil, nil, "Invalid form payload.")
+			return
+		}
+	}
+
+	parentCtx, status, err := s.resolveParentContext(
+		r.Context(),
+		principal.Role,
+		table,
+		strings.TrimSpace(r.FormValue("parent_table")),
+		strings.TrimSpace(r.FormValue("parent_id")),
+		strings.TrimSpace(r.FormValue("parent_field")),
+	)
+	if err != nil {
+		http.Error(w, err.Error(), status)
 		return
 	}
 
 	rowID := strings.TrimSpace(r.FormValue("row_id"))
 	values, err := s.parseFormValues(r, table, rowID == "")
 	if err != nil {
-		s.renderFormError(w, r, principal, table, rowID, values, err.Error())
+		s.renderFormError(w, r, principal, table, rowID, values, parentCtx, err.Error())
 		return
+	}
+	s.applyAutomaticUserID(table, principal, rowID == "", values)
+	if parentCtx != nil {
+		values[parentCtx.Field] = parentCtx.ParsedID
 	}
 
 	if rowID == "" {
 		if _, err := s.store.Insert(r.Context(), table.Name, values); err != nil {
-			s.renderFormError(w, r, principal, table, rowID, values, err.Error())
+			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, err.Error())
 			return
 		}
 	} else {
 		if err := s.store.Update(r.Context(), table.Name, rowID, values); err != nil {
-			s.renderFormError(w, r, principal, table, rowID, values, err.Error())
+			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, err.Error())
 			return
 		}
 	}
@@ -454,7 +587,7 @@ func (s *Server) handleTableDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.sendHTMXSuccess(w, "Deleted record.")
+	s.sendHTMXDeleteSuccess(w, table.Name, id, "Deleted record.")
 }
 
 func (s *Server) handleTableImport(w http.ResponseWriter, r *http.Request) {
@@ -574,6 +707,7 @@ func (s *Server) handleAPITableWrite(w http.ResponseWriter, r *http.Request, cre
 		s.writeJSON(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
 		return
 	}
+	s.applyAutomaticUserID(table, principal, create, values)
 
 	if create {
 		id, err := s.store.Insert(r.Context(), table.Name, values)
@@ -624,6 +758,9 @@ func (s *Server) handleAPITableDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, create bool) (map[string]any, error) {
 	values := make(map[string]any)
 	for _, field := range table.EditableFields() {
+		if isAutomaticUserField(table, field) {
+			continue
+		}
 		rawValue, ok := payload[field.Column]
 		if !ok {
 			if field.Required && create && field.Kind != store.KindBlob {
@@ -683,6 +820,9 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 func (s *Server) parseFormValues(r *http.Request, table store.TableDef, create bool) (map[string]any, error) {
 	values := make(map[string]any)
 	for _, field := range table.EditableFields() {
+		if isAutomaticUserField(table, field) {
+			continue
+		}
 		switch field.Kind {
 		case store.KindBlob:
 			file, _, err := r.FormFile(field.Column)
@@ -736,7 +876,7 @@ func (s *Server) parseFormValues(r *http.Request, table store.TableDef, create b
 	return values, nil
 }
 
-func (s *Server) buildFormData(ctx context.Context, principal Principal, table store.TableDef, rowID string, row map[string]any, message string) (formData, error) {
+func (s *Server) buildFormData(ctx context.Context, principal Principal, table store.TableDef, rowID string, row map[string]any, parentCtx *parentContext, message string) (formData, error) {
 	fields := make([]formFieldView, 0, len(table.EditableFields()))
 	firstField := true
 	for _, field := range table.EditableFields() {
@@ -759,6 +899,8 @@ func (s *Server) buildFormData(ctx context.Context, principal Principal, table s
 		value := ""
 		if raw, ok := row[field.Column]; ok && field.Kind != store.KindPassword {
 			value = store.DisplayValue(field, raw)
+		} else if parentCtx != nil && field.Column == parentCtx.Field {
+			value = parentCtx.RowID
 		} else if rowID == "" && field.Column == "usr_id" && table.Name != "users" {
 			value = strconv.FormatInt(principal.UserID, 10)
 		} else if rowID == "" && field.Kind == store.KindStatus {
@@ -772,38 +914,66 @@ func (s *Server) buildFormData(ctx context.Context, principal Principal, table s
 			value = ""
 		}
 
+		visible := true
+		if parentCtx != nil && field.Column == parentCtx.Field {
+			visible = false
+		}
+		if isAutomaticUserField(table, field) {
+			visible = false
+		}
+
+		autofocus := visible && firstField
+		if visible {
+			firstField = false
+		}
+
 		fields = append(fields, formFieldView{
 			Column:      field.Column,
 			Label:       field.Label,
-			Kind:        field.Kind,
+			Kind:        string(field.Kind),
 			Value:       value,
 			Required:    field.Required && !(field.Kind == store.KindPassword && rowID != ""),
 			Options:     options,
 			Accept:      field.Accept,
 			HasValue:    hasValue,
 			Help:        help,
-			Visible:     true,
+			Visible:     visible,
 			Rows:        textareaRows(field.Kind),
-			Autofocus:   firstField,
+			Autofocus:   autofocus,
 			Placeholder: field.Placeholder,
 		})
-		firstField = false
+	}
+
+	var parentView *parentContextView
+	if parentCtx != nil {
+		view, err := s.buildParentContextView(ctx, parentCtx, principal.Role)
+		if err != nil {
+			return formData{}, err
+		}
+		parentView = &view
+	}
+
+	deleteSummary, err := s.buildDeleteSummary(ctx, table, rowID, row)
+	if err != nil {
+		return formData{}, err
 	}
 
 	return formData{
-		Table:      table,
-		User:       principal,
-		Fields:     fields,
-		RowID:      rowID,
-		Error:      message,
-		CanDelete:  rowID != "",
-		SubmitPath: "/tables/" + table.Name + "/save",
-		DeletePath: "/tables/" + table.Name + "/row/" + rowID,
+		Table:                table,
+		User:                 principal,
+		Parent:               parentView,
+		Fields:               fields,
+		RowID:                rowID,
+		Error:                message,
+		CanDelete:            rowID != "",
+		SubmitPath:           "/tables/" + table.Name + "/save",
+		DeletePath:           "/tables/" + table.Name + "/row/" + rowID,
+		DeleteConfirmMessage: buildDeletePrompt(table.Label, deleteSummary),
 	}, nil
 }
 
-func (s *Server) renderFormError(w http.ResponseWriter, r *http.Request, principal Principal, table store.TableDef, rowID string, values map[string]any, message string) {
-	data, err := s.buildFormData(r.Context(), principal, table, rowID, values, message)
+func (s *Server) renderFormError(w http.ResponseWriter, r *http.Request, principal Principal, table store.TableDef, rowID string, values map[string]any, parentCtx *parentContext, message string) {
+	data, err := s.buildFormData(r.Context(), principal, table, rowID, values, parentCtx, message)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -829,6 +999,11 @@ func (s *Server) renderInlineError(w http.ResponseWriter, status int, message st
 
 func (s *Server) sendHTMXSuccess(w http.ResponseWriter, message string) {
 	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"stockit:refresh-table":{},"stockit:close-modal":{},"stockit:toast":{"message":%q}}`, message))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) sendHTMXDeleteSuccess(w http.ResponseWriter, tableName, id, message string) {
+	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"stockit:record-deleted":{"table":%q,"id":%q},"stockit:close-modal":{},"stockit:toast":{"message":%q}}`, tableName, id, message))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -947,20 +1122,279 @@ func buildHeaders(table store.TableDef, sort string, desc bool) []tableHeaderVie
 	return headers
 }
 
-func buildRows(table store.TableDef, records []map[string]any) []tableRowView {
+func (s *Server) buildRows(ctx context.Context, table store.TableDef, records []map[string]any) ([]tableRowView, error) {
 	fields := table.ListFields()
 	rows := make([]tableRowView, 0, len(records))
+	foreignLabels := map[string]map[string]string{}
 	for _, record := range records {
 		cells := make([]string, 0, len(fields))
 		for _, field := range fields {
-			cells = append(cells, store.DisplayValue(field, record[field.Column]))
+			value, err := s.displayTableValue(ctx, field, record[field.Column], foreignLabels)
+			if err != nil {
+				return nil, err
+			}
+			cells = append(cells, value)
 		}
+		rowID := fmt.Sprint(record[table.PrimaryKey])
 		rows = append(rows, tableRowView{
-			ID:    fmt.Sprint(record[table.PrimaryKey]),
-			Cells: cells,
+			ID:            rowID,
+			Cells:         cells,
+			DeleteConfirm: buildDeletePrompt(table.Label, buildDeleteSummaryFromCells(table, fields, rowID, cells)),
 		})
 	}
-	return rows
+	return rows, nil
+}
+
+func (s *Server) buildParentContextView(ctx context.Context, parentCtx *parentContext, role string) (parentContextView, error) {
+	view := parentContextView{
+		TableName:  parentCtx.Table.Name,
+		TableLabel: parentCtx.Table.Label,
+		RowID:      parentCtx.RowID,
+		Field:      parentCtx.Field,
+		Label:      parentCtx.Label,
+		Title:      parentCtx.Table.DisplayValue(parentCtx.Row),
+		CanWrite:   parentCtx.Table.CanWrite(role),
+	}
+
+	for _, field := range parentCtx.Table.Fields {
+		if field.Column == "usr_id" || field.Column == "created_at" || field.Kind == store.KindPassword || field.Kind == store.KindBlob {
+			continue
+		}
+
+		raw, ok := parentCtx.Row[field.Column]
+		if !ok || raw == nil {
+			continue
+		}
+
+		value, err := s.displayContextValue(ctx, field, raw)
+		if err != nil {
+			return parentContextView{}, err
+		}
+		value = compactSummaryValue(value)
+		if value == "" {
+			continue
+		}
+
+		view.Summary = append(view.Summary, parentFieldView{
+			Label: field.Label,
+			Value: value,
+		})
+	}
+
+	if len(view.Summary) == 0 && strings.TrimSpace(view.Title) != "" {
+		view.Summary = append(view.Summary, parentFieldView{
+			Label: parentCtx.Table.Label,
+			Value: compactSummaryValue(view.Title),
+		})
+	}
+
+	return view, nil
+}
+
+func (s *Server) displayContextValue(ctx context.Context, field store.Field, raw any) (string, error) {
+	if field.Kind != store.KindForeign {
+		return strings.TrimSpace(store.DisplayValue(field, raw)), nil
+	}
+
+	options, err := s.store.ReferenceOptions(ctx, field.RefTable)
+	if err != nil {
+		return "", err
+	}
+	current := strings.TrimSpace(store.DisplayValue(field, raw))
+	for _, option := range options {
+		if option.Value == current {
+			return strings.TrimSpace(option.Label), nil
+		}
+	}
+
+	return current, nil
+}
+
+func (s *Server) displayTableValue(ctx context.Context, field store.Field, raw any, foreignLabels map[string]map[string]string) (string, error) {
+	if field.Kind != store.KindForeign {
+		return strings.TrimSpace(store.DisplayValue(field, raw)), nil
+	}
+
+	current := strings.TrimSpace(store.DisplayValue(field, raw))
+	if current == "" {
+		return "", nil
+	}
+
+	labels, ok := foreignLabels[field.RefTable]
+	if !ok {
+		options, err := s.store.ReferenceOptions(ctx, field.RefTable)
+		if err != nil {
+			return "", err
+		}
+		labels = make(map[string]string, len(options))
+		for _, option := range options {
+			if option.Value == "" {
+				continue
+			}
+			labels[option.Value] = strings.TrimSpace(option.Label)
+		}
+		foreignLabels[field.RefTable] = labels
+	}
+
+	if label := labels[current]; label != "" {
+		return compactReferenceLabel(field.RefTable, label), nil
+	}
+	return current, nil
+}
+
+func (s *Server) buildDeleteSummary(ctx context.Context, table store.TableDef, rowID string, row map[string]any) (string, error) {
+	if rowID == "" || len(row) == 0 {
+		return "", nil
+	}
+
+	fields := table.ListFields()
+	foreignLabels := map[string]map[string]string{}
+	cells := make([]string, 0, len(fields))
+	for _, field := range fields {
+		value, err := s.displayTableValue(ctx, field, row[field.Column], foreignLabels)
+		if err != nil {
+			return "", err
+		}
+		cells = append(cells, value)
+	}
+	return buildDeleteSummaryFromCells(table, fields, rowID, cells), nil
+}
+
+func buildDeleteSummaryFromCells(table store.TableDef, fields []store.Field, rowID string, cells []string) string {
+	parts := make([]string, 0, 3)
+	for index, field := range fields {
+		if index >= len(cells) {
+			break
+		}
+		if field.Column == table.PrimaryKey || field.Column == "created_at" {
+			continue
+		}
+
+		value := compactSummaryValue(cells[index])
+		if value == "" {
+			continue
+		}
+		parts = append(parts, value)
+		if len(parts) == 3 {
+			break
+		}
+	}
+
+	if len(parts) > 0 {
+		return strings.Join(parts, " | ")
+	}
+	if rowID != "" {
+		return "#" + rowID
+	}
+	return ""
+}
+
+func buildDeletePrompt(tableLabel, summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return fmt.Sprintf("Delete record from %s?", tableLabel)
+	}
+	return fmt.Sprintf("Delete record from %s?\n%s", tableLabel, summary)
+}
+
+func compactReferenceLabel(refTable, label string) string {
+	if refTable != "users" {
+		return label
+	}
+
+	parts := strings.Split(label, " | ")
+	if len(parts) >= 2 {
+		return strings.TrimSpace(parts[1])
+	}
+	return strings.TrimSpace(label)
+}
+
+func compactSummaryValue(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if value == "" {
+		return ""
+	}
+
+	runes := []rune(value)
+	if len(runes) <= 72 {
+		return value
+	}
+	return string(runes[:69]) + "..."
+}
+
+func isAutomaticUserField(table store.TableDef, field store.Field) bool {
+	return table.Name != "users" && field.Column == "usr_id"
+}
+
+func (s *Server) applyAutomaticUserID(table store.TableDef, principal Principal, create bool, values map[string]any) {
+	if table.Name == "users" {
+		return
+	}
+	if create {
+		if _, ok := table.Field("usr_id"); ok {
+			values["usr_id"] = principal.UserID
+		}
+		return
+	}
+	delete(values, "usr_id")
+}
+
+func (s *Server) resolveParentContext(ctx context.Context, role string, table store.TableDef, parentTableName, parentID, parentField string) (*parentContext, int, error) {
+	if strings.TrimSpace(parentID) == "" {
+		return nil, 0, nil
+	}
+	if !table.IsSubtable() {
+		return nil, http.StatusBadRequest, fmt.Errorf("parent context is not supported for %s", table.Label)
+	}
+
+	if parentTableName == "" {
+		parentTableName = table.ParentTable
+	}
+	if parentField == "" {
+		parentField = table.ParentField
+	}
+	if parentTableName != table.ParentTable || parentField != table.ParentField {
+		return nil, http.StatusBadRequest, fmt.Errorf("invalid parent context for %s", table.Label)
+	}
+
+	filterField, ok := table.Field(parentField)
+	if !ok {
+		return nil, http.StatusInternalServerError, fmt.Errorf("unknown parent field %q for %s", parentField, table.Name)
+	}
+	parsedParentID, err := store.ParseFieldValue(filterField, parentID)
+	if err != nil || parsedParentID == nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("invalid parent id")
+	}
+
+	parentTable, ok := s.store.Table(parentTableName)
+	if !ok {
+		return nil, http.StatusNotFound, fmt.Errorf("parent table unavailable")
+	}
+	if !parentTable.CanRead(role) {
+		return nil, http.StatusForbidden, fmt.Errorf("forbidden")
+	}
+
+	parentRow, err := s.store.Get(ctx, parentTable.Name, parentID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, http.StatusNotFound, fmt.Errorf("parent row not found")
+		}
+		return nil, http.StatusInternalServerError, err
+	}
+
+	label := strings.TrimSpace(table.ParentLabel)
+	if label == "" {
+		label = "Selected " + parentTable.Label
+	}
+
+	return &parentContext{
+		Table:    parentTable,
+		Row:      parentRow,
+		RowID:    parentID,
+		Field:    parentField,
+		Label:    label,
+		ParsedID: parsedParentID,
+	}, 0, nil
 }
 
 func principalFromContext(ctx context.Context) Principal {
@@ -1006,7 +1440,7 @@ func bearerToken(header string) string {
 
 func textareaRows(kind store.FieldKind) int {
 	if kind == store.KindTextarea {
-		return 3
+		return 1
 	}
 	return 0
 }

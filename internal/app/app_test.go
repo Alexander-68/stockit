@@ -114,6 +114,29 @@ func TestGuestWriteForbiddenAndUserCannotReadUsersTable(t *testing.T) {
 	if apiResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("user users-api status = %d, want 403", apiResp.StatusCode)
 	}
+
+	adminClient := newHTTPClient(t)
+	login(t, adminClient, ts.URL, "admin", "admin")
+	adminToken := sessionCookieValue(t, adminClient, ts.URL)
+	_ = createRecord(t, adminClient, adminToken, ts.URL, "customers", map[string]any{
+		"cus_name_en": "Admin-Owned Customer",
+		"cus_status":  "Active",
+	})
+	customersPanelResp := get(t, adminClient, ts.URL+"/tables/customers?limit=30")
+	customersPanelBody := readBody(t, customersPanelResp.Body)
+	if customersPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("customers panel status = %d, want 200", customersPanelResp.StatusCode)
+	}
+	if !strings.Contains(customersPanelBody, ">admin<") {
+		t.Fatalf("customers panel should show username for user_id list cells: %s", customersPanelBody)
+	}
+	if strings.Contains(customersPanelBody, "1 | admin | admin") {
+		t.Fatalf("customers panel should not show expanded users reference labels in list cells: %s", customersPanelBody)
+	}
+	if !strings.Contains(customersPanelBody, `data-row-delete-confirm="Delete record from Customers?`) ||
+		!strings.Contains(customersPanelBody, `Admin-Owned Customer | admin | Active`) {
+		t.Fatalf("customers panel should include record-specific delete confirmation details: %s", customersPanelBody)
+	}
 }
 
 func TestCrossOriginWriteRejected(t *testing.T) {
@@ -139,6 +162,122 @@ func TestCrossOriginWriteRejected(t *testing.T) {
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestUserIDIsAutomaticAndNotSelectableInFormsOrWrites(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "user", "user")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	createFormResp := get(t, client, ts.URL+"/tables/customers/form")
+	createFormBody := readBody(t, createFormResp.Body)
+	if createFormResp.StatusCode != http.StatusOK {
+		t.Fatalf("create form status = %d, want 200", createFormResp.StatusCode)
+	}
+	if strings.Contains(createFormBody, `<select class="stockit-select mt-2 block w-full" name="usr_id"`) || strings.Contains(createFormBody, `<input class="stockit-input mt-2 block w-full" type="text" name="usr_id"`) {
+		t.Fatalf("create form should not expose usr_id as a selectable/editable field: %s", createFormBody)
+	}
+	if !strings.Contains(createFormBody, `type="hidden" name="usr_id" value="2"`) {
+		t.Fatalf("create form should keep usr_id as hidden current-user context: %s", createFormBody)
+	}
+
+	customerID := createRecord(t, client, token, ts.URL, "customers", map[string]any{
+		"cus_name_en": "Owned By User",
+		"cus_status":  "Active",
+		"usr_id":      1,
+	})
+
+	customerResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/customers/"+customerID, token, nil)
+	if customerResp.StatusCode != http.StatusOK {
+		t.Fatalf("customer api status = %d, want 200", customerResp.StatusCode)
+	}
+	var created apiResponse
+	decodeJSON(t, customerResp.Body, &created)
+	if fmt.Sprint(created.Row["usr_id"]) != "2" {
+		t.Fatalf("created customer usr_id = %v, want 2", created.Row["usr_id"])
+	}
+
+	editFormResp := get(t, client, ts.URL+"/tables/customers/form?id="+customerID)
+	editFormBody := readBody(t, editFormResp.Body)
+	if editFormResp.StatusCode != http.StatusOK {
+		t.Fatalf("edit form status = %d, want 200", editFormResp.StatusCode)
+	}
+	if strings.Contains(editFormBody, `<select class="stockit-select mt-2 block w-full" name="usr_id"`) || strings.Contains(editFormBody, `<input class="stockit-input mt-2 block w-full" type="text" name="usr_id"`) {
+		t.Fatalf("edit form should not expose usr_id as a selectable/editable field: %s", editFormBody)
+	}
+	if !strings.Contains(editFormBody, `type="hidden" name="usr_id" value="2"`) {
+		t.Fatalf("edit form should preserve usr_id as a hidden creator field: %s", editFormBody)
+	}
+
+	updateRecord(t, client, token, ts.URL, "customers", customerID, map[string]any{
+		"cus_name_en": "Still Owned By User",
+		"usr_id":      1,
+	})
+
+	updatedResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/customers/"+customerID, token, nil)
+	if updatedResp.StatusCode != http.StatusOK {
+		t.Fatalf("updated customer api status = %d, want 200", updatedResp.StatusCode)
+	}
+	var updated apiResponse
+	decodeJSON(t, updatedResp.Body, &updated)
+	if fmt.Sprint(updated.Row["usr_id"]) != "2" {
+		t.Fatalf("updated customer usr_id = %v, want 2", updated.Row["usr_id"])
+	}
+}
+
+func TestModalFormUsesCompactAutogrowTextareas(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	formResp := get(t, client, ts.URL+"/tables/customers/form")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("form status = %d, want 200", formResp.StatusCode)
+	}
+	if !strings.Contains(formBody, `id="stockit-modal-form"`) || !strings.Contains(formBody, `data-stockit-modal-form="true"`) {
+		t.Fatalf("modal form should expose the modal keyboard hook: %s", formBody)
+	}
+	for _, removedText := range []string{"Record Editor", "Create record", "Edit record"} {
+		if strings.Contains(formBody, removedText) {
+			t.Fatalf("modal form should remove legacy header copy %q: %s", removedText, formBody)
+		}
+	}
+	if !strings.Contains(formBody, `class="stockit-modal-actions"`) || !strings.Contains(formBody, `>Cancel</button>`) || !strings.Contains(formBody, `>Save</button>`) {
+		t.Fatalf("modal form should render header actions for cancel/save: %s", formBody)
+	}
+	if !strings.Contains(formBody, `class="stockit-field-caption"`) {
+		t.Fatalf("modal form should render compact floating field captions: %s", formBody)
+	}
+
+	addressFieldPattern := regexp.MustCompile(`(?s)<textarea[^>]*name="cus_address_en"[^>]*rows="1"[^>]*data-stockit-autogrow="true"`)
+	if !addressFieldPattern.MatchString(formBody) {
+		t.Fatalf("customer address field should render as a compact autogrow textarea: %s", formBody)
+	}
+
+	customerID := createRecord(t, client, token, ts.URL, "customers", map[string]any{
+		"cus_name_en": "Modal Layout Review",
+		"cus_status":  "Active",
+	})
+
+	editResp := get(t, client, ts.URL+"/tables/customers/form?id="+customerID)
+	editBody := readBody(t, editResp.Body)
+	if editResp.StatusCode != http.StatusOK {
+		t.Fatalf("edit form status = %d, want 200", editResp.StatusCode)
+	}
+	if !strings.Contains(editBody, `>Delete</button>`) {
+		t.Fatalf("edit modal should render delete in the header action row: %s", editBody)
+	}
+	if !strings.Contains(editBody, `hx-confirm="Delete record from Customers?`) ||
+		!strings.Contains(editBody, `Modal Layout Review | admin | Active`) {
+		t.Fatalf("edit modal delete button should include record-specific confirmation text: %s", editBody)
 	}
 }
 
@@ -262,6 +401,214 @@ func TestBOMCascadeAndLastAdminDeleteGuard(t *testing.T) {
 	lastAdminDeleteResp := doAPI(t, client, http.MethodDelete, ts.URL+"/api/tables/users/1", token, nil)
 	if lastAdminDeleteResp.StatusCode != http.StatusConflict {
 		t.Fatalf("delete last admin status = %d, want 409", lastAdminDeleteResp.StatusCode)
+	}
+}
+
+func TestBOMSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	finalA := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "BOM-FINAL-A",
+		"itm_model":        "BOM Final A",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	finalB := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "BOM-FINAL-B",
+		"itm_model":        "BOM Final B",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	part := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "BOM-PART-01",
+		"itm_model":        "BOM Part",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+
+	bomA := createRecord(t, client, token, ts.URL, "boms", map[string]any{
+		"bom_doc_number": "BOM-ALPHA",
+		"itm_id":         finalA,
+		"bom_note":       "Primary alpha BOM",
+		"bom_status":     "Active",
+	})
+	bomB := createRecord(t, client, token, ts.URL, "boms", map[string]any{
+		"bom_doc_number": "BOM-BETA",
+		"itm_id":         finalB,
+		"bom_status":     "Active",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "bom_components", map[string]any{
+		"bom_id":   bomA,
+		"itm_id":   part,
+		"boc_qty":  2,
+		"boc_note": "Alpha component",
+	})
+	_ = createRecord(t, client, token, ts.URL, "bom_components", map[string]any{
+		"bom_id":   bomB,
+		"itm_id":   part,
+		"boc_qty":  4,
+		"boc_note": "Beta component",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="bom_components"`) {
+		t.Fatalf("dashboard should not expose bom_components in the top nav: %s", dashboardBody)
+	}
+
+	bomPanelResp := get(t, client, ts.URL+"/tables/boms?limit=30")
+	bomPanelBody := readBody(t, bomPanelResp.Body)
+	if bomPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("bom panel status = %d, want 200", bomPanelResp.StatusCode)
+	}
+	if strings.Contains(bomPanelBody, "Active Table") {
+		t.Fatalf("bom panel should not render the legacy active-table eyebrow: %s", bomPanelBody)
+	}
+	if !strings.Contains(bomPanelBody, `data-child-table="bom_components"`) {
+		t.Fatalf("bom panel should advertise its subtable: %s", bomPanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/bom_components?limit=30&parent_table=boms&parent_id="+bomA+"&parent_field=bom_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "Alpha component") {
+		t.Fatalf("child panel missing filtered component: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "Beta component") {
+		t.Fatalf("child panel should exclude components from other BOMs: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "Selected BOM") || !strings.Contains(childPanelBody, ">BOM</span>") || !strings.Contains(childPanelBody, "BOM-ALPHA") {
+		t.Fatalf("child panel missing compact BOM context line: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "Primary alpha BOM") || !strings.Contains(childPanelBody, finalA+" | BOM-FINAL-A | BOM Final A") {
+		t.Fatalf("child panel hat should show compact BOM field summary: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, part+" | BOM-PART-01 | BOM Part") {
+		t.Fatalf("child panel should render item_id with compact item reference details: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, ">Edit<") {
+		t.Fatalf("child panel hat should not show the Edit label: %s", childPanelBody)
+	}
+
+	bomFormResp := get(t, client, ts.URL+"/tables/boms/form?id="+bomA)
+	bomFormBody := readBody(t, bomFormResp.Body)
+	if bomFormResp.StatusCode != http.StatusOK {
+		t.Fatalf("bom form status = %d, want 200", bomFormResp.StatusCode)
+	}
+	if !strings.Contains(bomFormBody, `name="bom_status"`) || !strings.Contains(bomFormBody, `<option value="Active" selected>Active</option>`) {
+		t.Fatalf("bom form should render status as a selected dropdown: %s", bomFormBody)
+	}
+	if !strings.Contains(bomFormBody, finalA+` | BOM-FINAL-A | BOM Final A`) {
+		t.Fatalf("bom form should show compact item reference labels: %s", bomFormBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/bom_components/form?id="+componentA+"&parent_table=boms&parent_id="+bomA+"&parent_field=bom_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("child form status = %d, want 200", formResp.StatusCode)
+	}
+	if strings.Contains(formBody, `name="bom_id"`) && strings.Contains(formBody, `<select class="stockit-select mt-2 block w-full" name="bom_id"`) {
+		t.Fatalf("child form should hide the inherited bom_id selector: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="bom_id" value="`+bomA+`"`) {
+		t.Fatalf("child form should include hidden bom_id: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="parent_table" value="boms"`) {
+		t.Fatalf("child form missing parent context: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/bom_components/save", url.Values{
+		"parent_table": {"boms"},
+		"parent_id":    {bomA},
+		"parent_field": {"bom_id"},
+		"itm_id":       {part},
+		"boc_qty":      {"7"},
+		"boc_note":     {"Auto linked component"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/bom_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["boc_note"]) != "Auto linked component" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["bom_id"]) != bomA {
+			t.Fatalf("auto-linked component attached to bom_id=%v, want %s", row["bom_id"], bomA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked component not found in API payload: %+v", payload.Rows)
+	}
+}
+
+func TestDeleteParentFromSubtableContextEmitsRecordDeletedTrigger(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	finalItemID := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "DEL-FG-001",
+		"itm_model":        "Delete Flow Final",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	bomID := createRecord(t, client, token, ts.URL, "boms", map[string]any{
+		"bom_doc_number": "DEL-BOM-001",
+		"itm_id":         finalItemID,
+		"bom_status":     "Active",
+	})
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/tables/boms/row/"+bomID, nil)
+	if err != nil {
+		t.Fatalf("new delete request: %v", err)
+	}
+	req.Header.Set("HX-Request", "true")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("delete request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", resp.StatusCode)
+	}
+
+	trigger := resp.Header.Get("HX-Trigger")
+	if !strings.Contains(trigger, `"stockit:record-deleted":{"table":"boms","id":"`+bomID+`"}`) {
+		t.Fatalf("delete trigger missing record-deleted payload: %s", trigger)
+	}
+	if strings.Contains(trigger, `"stockit:refresh-table"`) {
+		t.Fatalf("delete trigger should not request a generic table refresh: %s", trigger)
 	}
 }
 

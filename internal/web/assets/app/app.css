@@ -302,18 +302,37 @@ body {
   transition: background-color 160ms ease, transform 160ms ease;
 }
 
-.stockit-row:hover {
-  background: rgba(240, 253, 250, 0.72);
-}
-
-.stockit-row.is-selected {
-  background: linear-gradient(90deg, rgba(204, 251, 241, 0.78), rgba(240, 253, 250, 0.45));
-}
-
 .stockit-cell {
   padding: 0.88rem 1rem;
   border-bottom: 1px solid rgba(226, 232, 240, 0.85);
   color: var(--stockit-text-soft);
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.stockit-row:hover .stockit-cell {
+  background: rgba(240, 253, 250, 0.52);
+}
+
+.stockit-row.is-selected .stockit-cell {
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    inset 0 2px 0 rgba(15, 118, 110, 0.48),
+    inset 0 -2px 0 rgba(15, 118, 110, 0.48);
+}
+
+.stockit-row.is-selected .stockit-cell:first-child {
+  border-left: 2px solid rgba(15, 118, 110, 0.48);
+  border-top-left-radius: 0.95rem;
+  border-bottom-left-radius: 0.95rem;
+}
+
+.stockit-row.is-selected .stockit-cell:last-child {
+  border-right: 2px solid rgba(15, 118, 110, 0.48);
+  border-top-right-radius: 0.95rem;
+  border-bottom-right-radius: 0.95rem;
 }
 
 .stockit-empty-state {
@@ -350,23 +369,69 @@ body {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 1.25rem 1.25rem 1rem;
+  padding: 0.9rem 1rem 0.8rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.76));
 }
 
+.stockit-modal-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.stockit-modal-fields {
+  row-gap: 0.375rem;
+  column-gap: 0.75rem;
+}
+
+.stockit-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.stockit-modal-actions .stockit-button {
+  min-height: 2.35rem;
+  padding: 0.58rem 0.82rem;
+  font-size: 0.64rem;
+}
+
 .stockit-field-label {
+  position: relative;
   display: block;
+  padding-top: 0.12rem;
   font-size: 0.84rem;
   font-weight: 600;
   color: var(--stockit-text);
+}
+
+.stockit-field-caption {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  margin-left: 2.4rem;
+  margin-bottom: -0.9rem;
+  padding: 0 0.38rem;
+  border-radius: 9999px;
+  background: rgba(248, 250, 252, 0.92);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--stockit-muted);
+  transform: translateY(0.35rem);
+}
+
+.stockit-field-control {
+  margin-top: 0;
 }
 
 .stockit-input,
 .stockit-select,
 .stockit-textarea,
 .stockit-file-input {
-  min-height: 2.85rem;
+  min-height: 2.65rem;
   border-radius: 0.95rem;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: rgba(255, 255, 255, 0.84);
@@ -379,12 +444,13 @@ body {
 .stockit-input,
 .stockit-select,
 .stockit-textarea {
-  padding: 0.78rem 0.9rem;
+  padding: 0.72rem 0.85rem;
 }
 
 .stockit-textarea {
-  min-height: 7rem;
-  resize: vertical;
+  min-height: 2.65rem;
+  overflow-y: hidden;
+  resize: none;
 }
 
 .stockit-file-input {

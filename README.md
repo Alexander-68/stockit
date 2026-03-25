@@ -33,16 +33,23 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - touch-friendly horizontal and vertical scrolling
   - column sorting
   - viewport-sized initial row loading plus scroll-based lazy loading
-  - modal create/edit forms
+  - main table keyboard controls for row navigation and actions: `Up` / `Down` / `PageUp` / `PageDown` select rows, `Enter` edits, `Delete` removes, and `Insert` / `+` create
+  - compact modal create/edit forms with header actions and floating field captions
+  - modal keyboard shortcuts: `Esc` cancels, `Enter` saves, and textarea fields use `Shift+Enter` / `Ctrl+Enter` for new lines
+  - parent/subtable navigation for BOM -> BOM Components, with BOM row selection opening the filtered child list
+  - selected-parent context shown above subtable lists, with child create/edit forms inheriting and hiding the parent foreign key
+  - compact dropdown selectors for status fields and foreign-key fields using key reference columns
+  - creator-managed `usr_id` fields that are set automatically from the logged-in user instead of being selectable in forms
   - CSV import per writable table
   - modern light glass-style visual system with compact premium surfaces and restrained motion
+  - compact single-line textarea inputs that auto-grow as additional lines are entered
 - Built-in role rules:
   - `admin`: manage all tables and users
   - `user`: manage non-user tables
   - `guest`: read-only access to non-user tables
 - Guard against deleting the last admin account.
 - Minimal JSON API for table list/get/create/update/delete plus `/api/me`.
-- Extensive integration and store tests covering login, roles, CSRF protection, CRUD, CSV import, sorting, hidden password hashes, and BOM cascade behavior.
+- Extensive integration and store tests covering login, roles, CSRF protection, CRUD, CSV import, sorting, hidden password hashes, BOM cascade behavior, and parent/subtable BOM flows.
 
 ## Notes
 

@@ -39,11 +39,22 @@ type Field struct {
 	Placeholder string
 }
 
+type SubtableDef struct {
+	Table       string
+	ForeignKey  string
+	ParentLabel string
+}
+
 type TableDef struct {
 	Name          string
 	Label         string
 	PrimaryKey    string
 	TitleColumn   string
+	ReferenceCols []string
+	ParentTable   string
+	ParentField   string
+	ParentLabel   string
+	Subtable      *SubtableDef
 	ReadRoles     []string
 	WriteRoles    []string
 	Fields        []Field
@@ -59,6 +70,7 @@ func AllTables() map[string]TableDef {
 			Label:         "Users",
 			PrimaryKey:    "usr_id",
 			TitleColumn:   "usr_login_name",
+			ReferenceCols: []string{"usr_id", "usr_login_name", "usr_role"},
 			ReadRoles:     []string{"admin"},
 			WriteRoles:    []string{"admin"},
 			DefaultSort:   "usr_login_name",
@@ -76,6 +88,7 @@ func AllTables() map[string]TableDef {
 			Label:         "Customers",
 			PrimaryKey:    "cus_id",
 			TitleColumn:   "cus_name_en",
+			ReferenceCols: []string{"cus_id", "cus_name_en", "cus_phone"},
 			ReadRoles:     []string{"admin", "user", "guest"},
 			WriteRoles:    []string{"admin", "user"},
 			DefaultSort:   "cus_name_en",
@@ -101,6 +114,7 @@ func AllTables() map[string]TableDef {
 			Label:         "Suppliers",
 			PrimaryKey:    "sup_id",
 			TitleColumn:   "sup_name_en",
+			ReferenceCols: []string{"sup_id", "sup_code", "sup_name_en"},
 			ReadRoles:     []string{"admin", "user", "guest"},
 			WriteRoles:    []string{"admin", "user"},
 			DefaultSort:   "sup_name_en",
@@ -136,6 +150,7 @@ func AllTables() map[string]TableDef {
 			Label:         "Locations",
 			PrimaryKey:    "loc_id",
 			TitleColumn:   "loc_name",
+			ReferenceCols: []string{"loc_id", "loc_name", "loc_zone"},
 			ReadRoles:     []string{"admin", "user", "guest"},
 			WriteRoles:    []string{"admin", "user"},
 			DefaultSort:   "loc_name",
@@ -156,6 +171,7 @@ func AllTables() map[string]TableDef {
 			Label:         "Items",
 			PrimaryKey:    "itm_id",
 			TitleColumn:   "itm_sku",
+			ReferenceCols: []string{"itm_id", "itm_sku", "itm_model"},
 			ReadRoles:     []string{"admin", "user", "guest"},
 			WriteRoles:    []string{"admin", "user"},
 			DefaultSort:   "itm_sku",
@@ -179,6 +195,12 @@ func AllTables() map[string]TableDef {
 			Label:         "BOM",
 			PrimaryKey:    "bom_id",
 			TitleColumn:   "bom_doc_number",
+			ReferenceCols: []string{"bom_id", "bom_doc_number", "bom_status"},
+			Subtable: &SubtableDef{
+				Table:       "bom_components",
+				ForeignKey:  "bom_id",
+				ParentLabel: "Selected BOM",
+			},
 			ReadRoles:     []string{"admin", "user", "guest"},
 			WriteRoles:    []string{"admin", "user"},
 			DefaultSort:   "bom_doc_number",
@@ -198,6 +220,10 @@ func AllTables() map[string]TableDef {
 			Label:         "BOM Components",
 			PrimaryKey:    "boc_id",
 			TitleColumn:   "boc_id",
+			ReferenceCols: []string{"boc_id", "bom_id", "itm_id"},
+			ParentTable:   "boms",
+			ParentField:   "bom_id",
+			ParentLabel:   "Selected BOM",
 			ReadRoles:     []string{"admin", "user", "guest"},
 			WriteRoles:    []string{"admin", "user"},
 			DefaultSort:   "boc_id",
@@ -232,7 +258,11 @@ func TablesForRole(role string) []TableDef {
 
 	result := make([]TableDef, 0, len(names))
 	for _, name := range names {
-		result = append(result, all[name])
+		table := all[name]
+		if table.IsSubtable() {
+			continue
+		}
+		result = append(result, table)
 	}
 	return result
 }
@@ -282,6 +312,22 @@ func (t TableDef) CanRead(role string) bool {
 
 func (t TableDef) CanWrite(role string) bool {
 	return slices.Contains(t.WriteRoles, role)
+}
+
+func (t TableDef) IsSubtable() bool {
+	return strings.TrimSpace(t.ParentTable) != "" && strings.TrimSpace(t.ParentField) != ""
+}
+
+func (t TableDef) ReferenceColumns() []string {
+	if len(t.ReferenceCols) > 0 {
+		return slices.Clone(t.ReferenceCols)
+	}
+
+	columns := []string{t.PrimaryKey}
+	if t.TitleColumn != "" && t.TitleColumn != t.PrimaryKey {
+		columns = append(columns, t.TitleColumn)
+	}
+	return columns
 }
 
 func (t TableDef) SortColumn(requested string) string {

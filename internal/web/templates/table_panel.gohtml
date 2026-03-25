@@ -2,18 +2,33 @@
   class="stockit-panel flex min-h-0 flex-1 flex-col"
   data-stockit-panel
   data-table="{{ .Table.Name }}"
+  data-nav-table="{{ .NavTable }}"
   data-sort="{{ .Sort }}"
   data-desc="{{ if .Desc }}true{{ else }}false{{ end }}"
   data-limit="{{ .Limit }}"
   data-offset="{{ .RowCount }}"
   data-has-more="{{ if .HasMore }}true{{ else }}false{{ end }}"
   data-can-write="{{ if .CanWrite }}true{{ else }}false{{ end }}"
+  data-child-table="{{ .ChildTable }}"
+  data-child-field="{{ .ChildField }}"
+  data-parent-table="{{ if .Parent }}{{ .Parent.TableName }}{{ end }}"
+  data-parent-id="{{ if .Parent }}{{ .Parent.RowID }}{{ end }}"
+  data-parent-field="{{ if .Parent }}{{ .Parent.Field }}{{ end }}"
 >
   <div class="stockit-toolbar flex flex-wrap items-center gap-3">
     <div class="min-w-0 flex-1">
-      <p class="stockit-toolbar-eyebrow">Active Table</p>
       <h2 class="truncate text-lg font-semibold tracking-tight text-slate-950">{{ .Table.Label }}</h2>
-      <p class="truncate text-sm text-slate-500">{{ if .CanWrite }}Tap a row to edit or create a new record.{{ else }}Read-only access with live scrolling and sorting.{{ end }}</p>
+      <p class="truncate text-sm text-slate-500">
+        {{ if .Parent }}
+        Showing records linked to {{ .Parent.Title }}.
+        {{ else if .ChildTable }}
+        Select a row to open its related subtable.
+        {{ else if .CanWrite }}
+        Tap a row to edit or create a new record.
+        {{ else }}
+        Read-only access with live scrolling and sorting.
+        {{ end }}
+      </p>
     </div>
     <div class="stockit-toolbar-actions flex flex-wrap items-center gap-2">
       {{ if .CanWrite }}
@@ -33,6 +48,26 @@
       {{ end }}
     </div>
   </div>
+
+  {{ if .Parent }}
+  <button
+    class="mx-4 mt-4 flex items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-left shadow-sm transition hover:border-slate-300 hover:bg-white"
+    type="button"
+    {{ if .Parent.CanWrite }}onclick="StockIt.openForm('{{ .Parent.TableName }}', '{{ .Parent.RowID }}')"{{ else }}disabled{{ end }}
+  >
+    <span class="min-w-0 flex flex-1 flex-wrap items-center gap-2">
+      <span class="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">{{ if eq .Parent.TableName "boms" }}BOM{{ else }}{{ .Parent.Label }}{{ end }}</span>
+      <span class="flex flex-wrap gap-2">
+        {{ range .Parent.Summary }}
+        <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
+          <span class="font-semibold text-slate-500">{{ .Label }}</span>
+          <span class="max-w-[18rem] truncate text-slate-950">{{ .Value }}</span>
+        </span>
+        {{ end }}
+      </span>
+    </span>
+  </button>
+  {{ end }}
 
   <div id="table-messages" class="stockit-messages px-4 py-3"></div>
 

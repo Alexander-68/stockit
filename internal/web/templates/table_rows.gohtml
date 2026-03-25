@@ -1,5 +1,5 @@
 {{ range . }}
-<tr class="stockit-row cursor-pointer" data-row-id="{{ .ID }}" onclick="StockIt.rowSelected(this)">
+<tr class="stockit-row cursor-pointer" data-row-id="{{ .ID }}" data-row-delete-confirm="{{ .DeleteConfirm }}" onclick="StockIt.rowSelected(this)">
   {{ range .Cells }}
   <td class="stockit-cell max-w-[24rem] truncate align-top">{{ . }}</td>
   {{ end }}

@@ -1,85 +1,93 @@
-<div class="stockit-modal-header">
-  <div class="flex items-start justify-between gap-3">
-    <div>
-      <p class="stockit-toolbar-eyebrow">Record Editor</p>
-      <h3 class="text-xl font-semibold tracking-tight text-slate-950">{{ .Table.Label }}</h3>
-      <p class="mt-1 text-sm text-slate-500">{{ if .RowID }}Edit record{{ else }}Create record{{ end }}</p>
-    </div>
-    <button class="stockit-button stockit-button-ghost" type="button" onclick="StockIt.closeModal()">Close</button>
-  </div>
-</div>
-
 <form
-  class="space-y-5 px-5 py-5"
+  id="stockit-modal-form"
+  class="stockit-modal-form space-y-3 pb-4"
+  data-stockit-modal-form="true"
   hx-post="{{ .SubmitPath }}"
   hx-target="#modal-body"
   hx-encoding="multipart/form-data"
   enctype="multipart/form-data"
 >
+  <div class="stockit-modal-header">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <h3 class="text-lg font-semibold tracking-tight text-slate-950">{{ .Table.Label }}</h3>
+        {{ if .Parent }}
+        <p class="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{{ .Parent.Label }}: {{ .Parent.Title }}</p>
+        {{ end }}
+      </div>
+      <div class="stockit-modal-actions">
+        {{ if .CanDelete }}
+        <button
+          class="stockit-button stockit-button-danger"
+          type="button"
+          hx-delete="{{ .DeletePath }}"
+          hx-target="#modal-body"
+          hx-confirm="{{ .DeleteConfirmMessage }}"
+        >Delete</button>
+        {{ end }}
+        <button class="stockit-button stockit-button-secondary" type="button" onclick="StockIt.closeModal()">Cancel</button>
+        <button class="stockit-button stockit-button-primary" type="submit">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="px-4">
   <input type="hidden" name="row_id" value="{{ .RowID }}">
+  {{ if .Parent }}
+  <input type="hidden" name="parent_table" value="{{ .Parent.TableName }}">
+  <input type="hidden" name="parent_id" value="{{ .Parent.RowID }}">
+  <input type="hidden" name="parent_field" value="{{ .Parent.Field }}">
+  {{ end }}
 
   {{ if .Error }}
   <div class="stockit-inline-message stockit-inline-message-error">{{ .Error }}</div>
   {{ end }}
 
-  <div class="grid gap-4 md:grid-cols-2">
+  <div class="stockit-modal-fields grid md:grid-cols-2">
     {{ range .Fields }}
     {{ $field := . }}
+    {{ if not $field.Visible }}
+    <input type="hidden" name="{{ $field.Column }}" value="{{ $field.Value }}">
+    {{ else }}
     <label class="stockit-field-label md:col-span-1">
-      {{ $field.Label }}
+      <span class="stockit-field-caption">{{ $field.Label }}</span>
       {{ if eq $field.Kind "textarea" }}
-      <textarea class="stockit-textarea mt-2 block w-full" name="{{ $field.Column }}" rows="{{ $field.Rows }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>{{ $field.Value }}</textarea>
+      <textarea class="stockit-textarea stockit-field-control block w-full" name="{{ $field.Column }}" rows="{{ $field.Rows }}" data-stockit-autogrow="true" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>{{ $field.Value }}</textarea>
       {{ else if eq $field.Kind "enum" }}
-      <select class="stockit-select mt-2 block w-full" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <select class="stockit-select stockit-field-control block w-full" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
         {{ range $field.Options }}
         <option value="{{ .Value }}" {{ if eq .Value $field.Value }}selected{{ end }}>{{ .Label }}</option>
         {{ end }}
       </select>
       {{ else if eq $field.Kind "status" }}
-      <select class="stockit-select mt-2 block w-full" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <select class="stockit-select stockit-field-control block w-full" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
         {{ range $field.Options }}
         <option value="{{ .Value }}" {{ if eq .Value $field.Value }}selected{{ end }}>{{ .Label }}</option>
         {{ end }}
       </select>
       {{ else if eq $field.Kind "foreign" }}
-      <select class="stockit-select mt-2 block w-full" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <select class="stockit-select stockit-field-control block w-full" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
         {{ range $field.Options }}
         <option value="{{ .Value }}" {{ if eq .Value $field.Value }}selected{{ end }}>{{ .Label }}</option>
         {{ end }}
       </select>
       {{ else if eq $field.Kind "password" }}
-      <input class="stockit-input mt-2 block w-full" type="password" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <input class="stockit-input stockit-field-control block w-full" type="password" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else if eq $field.Kind "blob" }}
-      <input class="stockit-file-input mt-2 block w-full text-sm" type="file" name="{{ $field.Column }}" accept="{{ $field.Accept }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <input class="stockit-file-input stockit-field-control block w-full text-sm" type="file" name="{{ $field.Column }}" accept="{{ $field.Accept }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else if eq $field.Kind "integer" }}
-      <input class="stockit-input mt-2 block w-full" type="number" step="1" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <input class="stockit-input stockit-field-control block w-full" type="number" step="1" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else if eq $field.Kind "real" }}
-      <input class="stockit-input mt-2 block w-full" type="number" step="any" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <input class="stockit-input stockit-field-control block w-full" type="number" step="any" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else }}
-      <input class="stockit-input mt-2 block w-full" type="text" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      <input class="stockit-input stockit-field-control block w-full" type="text" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ end }}
       {{ if $field.Help }}
-      <span class="mt-2 block text-xs font-normal text-slate-500">{{ $field.Help }}</span>
+      <span class="mt-1 block text-xs font-normal text-slate-500">{{ $field.Help }}</span>
       {{ end }}
     </label>
     {{ end }}
+    {{ end }}
   </div>
-
-  <div class="flex items-center justify-between gap-3 border-t border-slate-200/80 pt-4">
-    <div>
-      {{ if .CanDelete }}
-      <button
-        class="stockit-button stockit-button-danger"
-        type="button"
-        hx-delete="{{ .DeletePath }}"
-        hx-target="#modal-body"
-        hx-confirm="Delete this record?"
-      >Delete</button>
-      {{ end }}
-    </div>
-    <div class="flex gap-2">
-      <button class="stockit-button stockit-button-secondary" type="button" onclick="StockIt.closeModal()">Cancel</button>
-      <button class="stockit-button stockit-button-primary" type="submit">Save</button>
-    </div>
   </div>
 </form>

@@ -28,6 +28,7 @@ type ListOptions struct {
 	Desc   bool
 	Limit  int
 	Offset int
+	Filter map[string]any
 }
 
 type ListResult struct {
@@ -90,7 +91,7 @@ func (s *Store) Table(name string) (TableDef, bool) {
 func (s *Store) TablesForRole(role string) []TableDef {
 	tables := make([]TableDef, 0, len(s.tables))
 	for _, table := range s.tables {
-		if table.CanRead(role) {
+		if table.CanRead(role) && !table.IsSubtable() {
 			tables = append(tables, table)
 		}
 	}
@@ -133,14 +134,39 @@ func (s *Store) List(ctx context.Context, tableName string, opts ListOptions) (L
 		direction = "DESC"
 	}
 
+	filterColumns := make([]string, 0, len(opts.Filter))
+	for column := range opts.Filter {
+		filterColumns = append(filterColumns, column)
+	}
+	slices.Sort(filterColumns)
+
+	whereClauses := make([]string, 0, len(opts.Filter))
+	args := make([]any, 0, len(opts.Filter)+2)
+	for _, column := range filterColumns {
+		value := opts.Filter[column]
+		field, ok := table.Field(column)
+		if !ok {
+			return ListResult{}, fmt.Errorf("unknown filter column %q for table %q", column, tableName)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", quoteIdent(field.Column)))
+		args = append(args, value)
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
 	query := fmt.Sprintf(
-		`SELECT %s FROM %s ORDER BY %s %s LIMIT ? OFFSET ?`,
+		`SELECT %s FROM %s%s ORDER BY %s %s LIMIT ? OFFSET ?`,
 		joinQuoted(selectColumns(table)),
 		quoteIdent(table.Name),
+		whereSQL,
 		quoteIdent(sortColumn),
 		direction,
 	)
-	rows, err := s.db.QueryContext(ctx, query, limit+1, opts.Offset)
+	args = append(args, limit+1, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return ListResult{}, fmt.Errorf("list rows: %w", err)
 	}
@@ -282,10 +308,14 @@ func (s *Store) ReferenceOptions(ctx context.Context, tableName string) ([]Optio
 		return nil, fmt.Errorf("unknown reference table %q", tableName)
 	}
 
+	columns := table.ReferenceColumns()
+	if len(columns) == 0 {
+		columns = []string{table.PrimaryKey}
+	}
+
 	query := fmt.Sprintf(
-		`SELECT %s, %s FROM %s ORDER BY %s ASC`,
-		quoteIdent(table.PrimaryKey),
-		quoteIdent(table.TitleColumn),
+		`SELECT %s FROM %s ORDER BY %s ASC`,
+		joinQuoted(columns),
 		quoteIdent(table.Name),
 		quoteIdent(table.TitleColumn),
 	)
@@ -297,14 +327,38 @@ func (s *Store) ReferenceOptions(ctx context.Context, tableName string) ([]Optio
 
 	options := []Option{{Value: "", Label: ""}}
 	for rows.Next() {
-		var rawID any
-		var rawLabel any
-		if err := rows.Scan(&rawID, &rawLabel); err != nil {
+		values := make([]any, len(columns))
+		dest := make([]any, len(columns))
+		for index := range values {
+			dest[index] = &values[index]
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, fmt.Errorf("scan reference option: %w", err)
 		}
+
+		parts := make([]string, 0, len(columns))
+		for index, column := range columns {
+			field, ok := table.Field(column)
+			if !ok {
+				continue
+			}
+			label := DisplayValue(field, normalizeValue(values[index]))
+			label = strings.TrimSpace(label)
+			if label == "" {
+				continue
+			}
+			parts = append(parts, label)
+		}
+
+		value := fmt.Sprint(normalizeValue(values[0]))
+		label := strings.Join(parts, " | ")
+		if label == "" {
+			label = value
+		}
+
 		options = append(options, Option{
-			Value: fmt.Sprint(normalizeValue(rawID)),
-			Label: fmt.Sprint(normalizeValue(rawLabel)),
+			Value: value,
+			Label: label,
 		})
 	}
 	return options, rows.Err()
