@@ -1880,7 +1880,22 @@ func doAPI(t *testing.T, client *http.Client, method, target, token string, payl
 func postForm(t *testing.T, client *http.Client, target string, values url.Values) *http.Response {
 	t.Helper()
 
-	resp, err := client.PostForm(target, values)
+	return postFormWithHeaders(t, client, target, values, nil)
+}
+
+func postFormWithHeaders(t *testing.T, client *http.Client, target string, values url.Values, headers map[string]string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(values.Encode()))
+	if err != nil {
+		t.Fatalf("new form request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("post form %s: %v", target, err)
 	}
@@ -1890,7 +1905,21 @@ func postForm(t *testing.T, client *http.Client, target string, values url.Value
 func get(t *testing.T, client *http.Client, target string) *http.Response {
 	t.Helper()
 
-	resp, err := client.Get(target)
+	return getWithHeaders(t, client, target, nil)
+}
+
+func getWithHeaders(t *testing.T, client *http.Client, target string, headers map[string]string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("new GET request %s: %v", target, err)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("get %s: %v", target, err)
 	}
@@ -1964,5 +1993,191 @@ func idColumn(table string) string {
 		return "soc_id"
 	default:
 		return "id"
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	resp := get(t, client, ts.URL+"/login")
+	_ = resp.Body.Close()
+
+	headers := []struct {
+		name  string
+		want  string
+		exact bool
+	}{
+		{"X-Content-Type-Options", "nosniff", true},
+		{"X-Frame-Options", "SAMEORIGIN", true},
+		{"Referrer-Policy", "strict-origin-when-cross-origin", true},
+		{"Content-Security-Policy", "default-src 'self'", false},
+	}
+
+	for _, h := range headers {
+		got := resp.Header.Get(h.name)
+		if h.exact {
+			if got != h.want {
+				t.Errorf("header %s = %q, want %q", h.name, got, h.want)
+			}
+		} else {
+			if !strings.Contains(got, h.want) {
+				t.Errorf("header %s = %q, does not contain %q", h.name, got, h.want)
+			}
+		}
+	}
+
+	if got := resp.Header.Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("unexpected HSTS header over plain HTTP: %q", got)
+	}
+}
+
+func TestLoginRateLimiting(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+
+	// Attempt login 11 times (limit is 10)
+	for i := 1; i <= 11; i++ {
+		resp := postForm(t, client, ts.URL+"/login", url.Values{
+			"login_name": {"admin"},
+			"password":   {"wrong"},
+		})
+		body := readBody(t, resp.Body)
+
+		if i <= 10 {
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: status = %d, want 401", i, resp.StatusCode)
+			}
+		} else {
+			if resp.StatusCode != http.StatusTooManyRequests {
+				t.Fatalf("attempt %d: status = %d, want 429", i, resp.StatusCode)
+			}
+			if !strings.Contains(body, "Too many login attempts.") {
+				t.Fatalf("unexpected rate limit body: %s", body)
+			}
+		}
+	}
+}
+
+func TestForwardedProtoIsIgnoredByDefault(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+
+	resp := getWithHeaders(t, client, ts.URL+"/login", map[string]string{
+		"X-Forwarded-Proto": "https",
+	})
+	_ = resp.Body.Close()
+
+	if got := resp.Header.Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("unexpected HSTS header when X-Forwarded-Proto is spoofed: %q", got)
+	}
+
+	loginResp := postFormWithHeaders(t, client, ts.URL+"/login", url.Values{
+		"login_name": {"admin"},
+		"password":   {"admin"},
+	}, map[string]string{
+		"X-Forwarded-Proto": "https",
+	})
+	defer loginResp.Body.Close()
+
+	if loginResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login status = %d, want %d", loginResp.StatusCode, http.StatusSeeOther)
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range loginResp.Cookies() {
+		if cookie.Name == sessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("session cookie missing from login response")
+	}
+	if sessionCookie.Secure {
+		t.Fatal("session cookie should not become Secure from spoofed X-Forwarded-Proto")
+	}
+}
+
+func TestLoginRateLimitingIgnoresSpoofedForwardedFor(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+
+	for i := 1; i <= 11; i++ {
+		resp := postFormWithHeaders(t, client, ts.URL+"/login", url.Values{
+			"login_name": {"admin"},
+			"password":   {"wrong"},
+		}, map[string]string{
+			"X-Forwarded-For": fmt.Sprintf("198.51.100.%d", i),
+		})
+		body := readBody(t, resp.Body)
+
+		if i <= 10 {
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: status = %d, want 401", i, resp.StatusCode)
+			}
+			continue
+		}
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("attempt %d: status = %d, want 429", i, resp.StatusCode)
+		}
+		if !strings.Contains(body, "Too many login attempts.") {
+			t.Fatalf("unexpected rate limit body: %s", body)
+		}
+	}
+}
+
+func TestDatabaseErrorSanitization(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+
+	// Create a user to cause a unique constraint violation
+	_ = postForm(t, client, ts.URL+"/tables/users/save", url.Values{
+		"usr_login_name": {"newuser"},
+		"usr_password":   {"password"},
+		"usr_role":       {"user"},
+	})
+
+	// Attempt to create the same user again
+	resp := postForm(t, client, ts.URL+"/tables/users/save", url.Values{
+		"usr_login_name": {"newuser"},
+		"usr_password":   {"password"},
+		"usr_role":       {"user"},
+	})
+	body := readBody(t, resp.Body)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("duplicate user status = %d, want 400", resp.StatusCode)
+	}
+
+	// The error message should be in a specific div
+	errorMsgPattern := regexp.MustCompile(`<div class="stockit-inline-message stockit-inline-message-error">(.*?)</div>`)
+	matches := errorMsgPattern.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		t.Fatalf("could not find error message in response: %s", body)
+	}
+	errorMsg := matches[1]
+
+	// Should NOT contain technical details like "UNIQUE constraint failed" or "users."
+	leakyPhrases := []string{"UNIQUE constraint failed", "users."}
+	for _, phrase := range leakyPhrases {
+		if strings.Contains(errorMsg, phrase) {
+			t.Errorf("error message leaks technical detail %q: %s", phrase, errorMsg)
+		}
+	}
+
+	if !strings.Contains(errorMsg, "A record with this information already exists.") {
+		t.Errorf("error message missing expected sanitized text: %s", errorMsg)
 	}
 }

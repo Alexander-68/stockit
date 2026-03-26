@@ -29,6 +29,8 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - cookie and `Authorization: Bearer` token support
 - Standard-library `net/http` routing and handlers.
 - Cross-origin write protection using `net/http.CrossOriginProtection`.
+- Defensive response headers for content type sniffing, framing, referrer policy, and CSP.
+- Login attempt throttling keyed to the direct client socket address with bounded in-memory tracking.
 - Embedded local assets:
   - HTMX
   - Tailwind CSS
@@ -62,6 +64,8 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
 
 - SQLite temp directories are forced to the resolved database directory through `TMPDIR` and `SQLITE_TMPDIR` during startup.
 - User password hashes are never returned by the generic UI/API table readers.
+- Session cookies are `HttpOnly` and `SameSite=Strict`, and are marked `Secure` only for real TLS requests.
+- `X-Forwarded-For` and `X-Forwarded-Proto` are not trusted by default; add explicit trusted-proxy handling before deploying behind a reverse proxy that terminates TLS.
 - The current UI direction is intentionally sleek and modern while preserving dense table-first workflows; it uses subtle gradients, layered light surfaces, and stronger active/focus states instead of the original bare prototype styling.
 - Status fields currently use a combined option set from the specification text:
   - `Draft`

@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"stockit/internal/auth"
@@ -38,12 +40,14 @@ type Principal struct {
 }
 
 type Server struct {
-	cfg       Config
-	store     *store.Store
-	sessions  *auth.Manager
-	templates *web.Templates
-	cop       *http.CrossOriginProtection
-	handler   http.Handler
+	cfg        Config
+	store      *store.Store
+	sessions   *auth.Manager
+	templates  *web.Templates
+	cop        *http.CrossOriginProtection
+	handler    http.Handler
+	limitersMu sync.Mutex
+	limiters   map[string]rateLimiter
 }
 
 type loginPageData struct {
@@ -152,6 +156,12 @@ type apiResponse struct {
 	Error   string           `json:"error,omitempty"`
 }
 
+const (
+	loginAttemptWindow  = time.Minute
+	loginAttemptLimit   = 10
+	loginLimiterMaxIdle = 10 * time.Minute
+)
+
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:8080"
@@ -177,8 +187,9 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		sessions:  auth.NewManager(5, 15*time.Minute),
 		templates: templates,
 		cop:       http.NewCrossOriginProtection(),
+		limiters:  make(map[string]rateLimiter),
 	}
-	srv.handler = srv.routes()
+	srv.handler = srv.securityHeaders(srv.routes())
 	return srv, nil
 }
 
@@ -215,6 +226,91 @@ func (s *Server) Run(ctx context.Context) error {
 	return err
 }
 
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		if s.isHTTPS(r) {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+
+		csp := "default-src 'self'; " +
+			"script-src 'self' 'unsafe-inline'; " +
+			"style-src 'self' 'unsafe-inline'; " +
+			"img-src 'self' data:; " +
+			"font-src 'self' data:; " +
+			"frame-ancestors 'none'; " +
+			"form-action 'self';"
+		w.Header().Set("Content-Security-Policy", csp)
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) isHTTPS(r *http.Request) bool {
+	return r.TLS != nil
+}
+
+type rateLimiter struct {
+	attempts int
+	lastSeen time.Time
+}
+
+func (s *Server) limitLogin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.allowLoginAttempt(s.getRemoteIP(r), time.Now()) {
+			s.renderWithStatus(w, http.StatusTooManyRequests, "login.gohtml", loginPageData{Error: "Too many login attempts. Please wait a minute."})
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func (s *Server) allowLoginAttempt(ip string, now time.Time) bool {
+	if ip == "" {
+		ip = "unknown"
+	}
+
+	s.limitersMu.Lock()
+	defer s.limitersMu.Unlock()
+
+	s.pruneLimitersLocked(now)
+
+	rl := s.limiters[ip]
+	if now.Sub(rl.lastSeen) > loginAttemptWindow {
+		rl.attempts = 0
+	}
+	rl.lastSeen = now
+	rl.attempts++
+	s.limiters[ip] = rl
+
+	return rl.attempts <= loginAttemptLimit
+}
+
+func (s *Server) pruneLimitersLocked(now time.Time) {
+	for ip, rl := range s.limiters {
+		if now.Sub(rl.lastSeen) > loginLimiterMaxIdle {
+			delete(s.limiters, ip)
+		}
+	}
+}
+
+func (s *Server) getRemoteIP(r *http.Request) string {
+	addr := strings.TrimSpace(r.RemoteAddr)
+	if addr == "" {
+		return ""
+	}
+
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil {
+		return host
+	}
+	return addr
+}
+
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -224,7 +320,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /favicon-32x32.png", s.handleFavicon32)
 
 	mux.HandleFunc("GET /login", s.handleLoginPage)
-	mux.Handle("POST /login", s.cop.Handler(http.HandlerFunc(s.handleLoginPost)))
+	mux.Handle("POST /login", s.cop.Handler(s.limitLogin(s.handleLoginPost)))
 
 	mux.Handle("GET /", s.withSession(s.handleDashboard))
 	mux.Handle("POST /logout", s.cop.Handler(s.withSession(s.handleLogout)))
@@ -290,7 +386,7 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   r.TLS != nil,
+		Secure:   s.isHTTPS(r),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -305,7 +401,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		MaxAge:   -1,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   r.TLS != nil,
+		Secure:   s.isHTTPS(r),
 	})
 
 	if r.Header.Get("HX-Request") != "" {
@@ -498,6 +594,20 @@ func (s *Server) handleTableForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "modal_form.gohtml", data)
 }
 
+func (s *Server) sanitizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "UNIQUE constraint failed") {
+		return "A record with this information already exists."
+	}
+	if strings.Contains(msg, "FOREIGN KEY constraint failed") {
+		return "This record is being used by another table and cannot be changed or deleted."
+	}
+	return "An error occurred while saving the record."
+}
+
 func (s *Server) handleTableSave(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	table, ok := s.authorizeTable(w, r, principal.Role, true)
@@ -543,12 +653,12 @@ func (s *Server) handleTableSave(w http.ResponseWriter, r *http.Request) {
 
 	if rowID == "" {
 		if _, err := s.store.Insert(r.Context(), table.Name, values); err != nil {
-			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, err.Error())
+			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, s.sanitizeError(err))
 			return
 		}
 	} else {
 		if err := s.store.Update(r.Context(), table.Name, rowID, values); err != nil {
-			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, err.Error())
+			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, s.sanitizeError(err))
 			return
 		}
 	}
