@@ -374,7 +374,7 @@ func (s *Server) handleTablePanel(w http.ResponseWriter, r *http.Request) {
 		User:      principal,
 		Table:     table,
 		NavTable:  table.Name,
-		Headers:   buildHeaders(table, sortColumn, desc),
+		Headers:   buildHeaders(table, parentCtx, sortColumn, desc),
 		Rows:      nil,
 		CanWrite:  table.CanWrite(principal.Role),
 		Sort:      sortColumn,
@@ -384,7 +384,7 @@ func (s *Server) handleTablePanel(w http.ResponseWriter, r *http.Request) {
 		RowCount:  len(result.Rows),
 		CanImport: table.ImportEnabled && table.CanWrite(principal.Role),
 	}
-	rows, err := s.buildRows(r.Context(), table, result.Rows)
+	rows, err := s.buildRows(r.Context(), table, parentCtx, result.Rows)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -447,7 +447,7 @@ func (s *Server) handleTableRows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("X-Has-More", strconv.FormatBool(result.HasMore))
-	rows, err := s.buildRows(r.Context(), table, result.Rows)
+	rows, err := s.buildRows(r.Context(), table, parentCtx, result.Rows)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -810,7 +810,13 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 			}
 		default:
 			if text, ok := rawValue.(string); ok {
-				values[field.Column] = strings.TrimSpace(text)
+				parsed, err := store.ParseFieldValue(field, text)
+				if err != nil {
+					return nil, fmt.Errorf("parse %s: %w", field.Column, err)
+				}
+				if parsed != nil {
+					values[field.Column] = parsed
+				}
 			}
 		}
 	}
@@ -1109,9 +1115,10 @@ func (s *Server) handleFavicon32(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(web.Favicon32())
 }
 
-func buildHeaders(table store.TableDef, sort string, desc bool) []tableHeaderView {
-	headers := make([]tableHeaderView, 0, len(table.ListFields()))
-	for _, field := range table.ListFields() {
+func buildHeaders(table store.TableDef, parentCtx *parentContext, sort string, desc bool) []tableHeaderView {
+	fields := visibleListFields(table, parentCtx)
+	headers := make([]tableHeaderView, 0, len(fields))
+	for _, field := range fields {
 		headers = append(headers, tableHeaderView{
 			Column: field.Column,
 			Label:  field.Label,
@@ -1122,8 +1129,8 @@ func buildHeaders(table store.TableDef, sort string, desc bool) []tableHeaderVie
 	return headers
 }
 
-func (s *Server) buildRows(ctx context.Context, table store.TableDef, records []map[string]any) ([]tableRowView, error) {
-	fields := table.ListFields()
+func (s *Server) buildRows(ctx context.Context, table store.TableDef, parentCtx *parentContext, records []map[string]any) ([]tableRowView, error) {
+	fields := visibleListFields(table, parentCtx)
 	rows := make([]tableRowView, 0, len(records))
 	foreignLabels := map[string]map[string]string{}
 	for _, record := range records {
@@ -1143,6 +1150,22 @@ func (s *Server) buildRows(ctx context.Context, table store.TableDef, records []
 		})
 	}
 	return rows, nil
+}
+
+func visibleListFields(table store.TableDef, parentCtx *parentContext) []store.Field {
+	fields := table.ListFields()
+	if parentCtx == nil || parentCtx.Field == "" {
+		return fields
+	}
+
+	visible := make([]store.Field, 0, len(fields))
+	for _, field := range fields {
+		if field.Column == parentCtx.Field {
+			continue
+		}
+		visible = append(visible, field)
+	}
+	return visible
 }
 
 func (s *Server) buildParentContextView(ctx context.Context, parentCtx *parentContext, role string) (parentContextView, error) {

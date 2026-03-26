@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -430,6 +431,7 @@ func (s *Store) init(ctx context.Context) error {
 			usr_login_name TEXT NOT NULL UNIQUE,
 			usr_password TEXT NOT NULL,
 			usr_role TEXT NOT NULL,
+			usr_note TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS customers (
@@ -443,6 +445,7 @@ func (s *Store) init(ctx context.Context) error {
 			cus_ship_address_zh TEXT,
 			cus_contact_name TEXT,
 			cust_contact_email TEXT,
+			cus_note TEXT,
 			usr_id INTEGER,
 			cus_status TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -480,6 +483,7 @@ func (s *Store) init(ctx context.Context) error {
 			loc_address_en TEXT,
 			loc_address_zh TEXT,
 			loc_zone TEXT,
+			loc_note TEXT,
 			usr_id INTEGER,
 			loc_status TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -494,6 +498,7 @@ func (s *Store) init(ctx context.Context) error {
 			itm_type TEXT,
 			itm_pic BLOB,
 			itm_measure_unit TEXT,
+			itm_note TEXT,
 			usr_id INTEGER,
 			itm_status TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -502,6 +507,7 @@ func (s *Store) init(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS boms (
 			bom_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			bom_doc_number TEXT NOT NULL,
+			bom_doc_date TEXT,
 			itm_id INTEGER,
 			bom_note TEXT,
 			usr_id INTEGER,
@@ -520,6 +526,95 @@ func (s *Store) init(ctx context.Context) error {
 			FOREIGN KEY (bom_id) REFERENCES boms (bom_id) ON DELETE CASCADE,
 			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS purchase_orders (
+			por_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sup_id INTEGER,
+			por_doc_number TEXT NOT NULL,
+			por_doc_date TEXT,
+			itm_id INTEGER,
+			por_ship_date TEXT,
+			por_paid_date TEXT,
+			usr_id INTEGER,
+			por_status TEXT,
+			por_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS quotes (
+			qot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sup_id INTEGER,
+			qot_doc_number TEXT NOT NULL,
+			qot_doc_date TEXT,
+			itm_id INTEGER,
+			usr_id INTEGER,
+			qot_status TEXT,
+			qot_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS quote_components (
+			qoc_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			qot_id INTEGER NOT NULL,
+			itm_id INTEGER NOT NULL,
+			qot_moq REAL,
+			qot_qty REAL,
+			qot_price REAL,
+			qot_currency TEXT,
+			qot_lead_time TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (qot_id) REFERENCES quotes (qot_id) ON DELETE CASCADE,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS po_components (
+			poc_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			por_id INTEGER NOT NULL,
+			itm_id INTEGER NOT NULL,
+			poc_qty REAL,
+			poc_price REAL,
+			poc_currency TEXT,
+			poc_shipped_date TEXT,
+			poc_delivered_date TEXT,
+			poc_delivered_qty REAL,
+			poc_received_date TEXT,
+			poc_received_qty REAL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (por_id) REFERENCES purchase_orders (por_id) ON DELETE CASCADE,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS sales_orders (
+			sor_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			cus_id INTEGER,
+			sor_doc_number TEXT NOT NULL,
+			sor_doc_date TEXT,
+			sor_ship_date TEXT,
+			sor_paid_date TEXT,
+			usr_id INTEGER,
+			sor_status TEXT,
+			sor_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (cus_id) REFERENCES customers (cus_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS sales_order_components (
+			soc_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sor_id INTEGER NOT NULL,
+			itm_id INTEGER NOT NULL,
+			sor_qty REAL,
+			sor_price REAL,
+			sor_currency TEXT,
+			sor_ship_date TEXT,
+			sor_shipped_date TEXT,
+			sor_shipped_qty REAL,
+			sor_shipped_trackno TEXT,
+			soc_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sor_id) REFERENCES sales_orders (sor_id) ON DELETE CASCADE,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -528,7 +623,78 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
+	if err := s.ensureColumn(ctx, "boms", "bom_doc_date", "TEXT"); err != nil {
+		return err
+	}
+	for _, migration := range []struct {
+		table  string
+		column string
+		def    string
+	}{
+		{table: "users", column: "usr_note", def: "TEXT"},
+		{table: "customers", column: "cus_note", def: "TEXT"},
+		{table: "locations", column: "loc_note", def: "TEXT"},
+		{table: "items", column: "itm_note", def: "TEXT"},
+		{table: "quotes", column: "qot_note", def: "TEXT"},
+		{table: "sales_orders", column: "sor_note", def: "TEXT"},
+		{table: "sales_order_components", column: "soc_note", def: "TEXT"},
+	} {
+		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.def); err != nil {
+			return err
+		}
+	}
+
 	return s.seedDefaults(ctx)
+}
+
+func (s *Store) ensureColumn(ctx context.Context, tableName, columnName, columnDef string) error {
+	exists, err := s.hasColumn(ctx, tableName, columnName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	statement := fmt.Sprintf(
+		`ALTER TABLE %s ADD COLUMN %s %s`,
+		quoteIdent(tableName),
+		quoteIdent(columnName),
+		columnDef,
+	)
+	if _, err := s.db.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", tableName, columnName, err)
+	}
+	return nil
+}
+
+func (s *Store) hasColumn(ctx context.Context, tableName, columnName string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, quoteIdent(tableName)))
+	if err != nil {
+		return false, fmt.Errorf("inspect table %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return false, fmt.Errorf("scan table info for %s: %w", tableName, err)
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate table info for %s: %w", tableName, err)
+	}
+	return false, nil
 }
 
 func (s *Store) seedDefaults(ctx context.Context) error {
@@ -635,6 +801,12 @@ func ParseFieldValue(field Field, rawValue string) (any, error) {
 			return nil, err
 		}
 		return parsed, nil
+	case KindDate:
+		parsed, err := time.Parse(time.DateOnly, trimmed)
+		if err != nil {
+			return nil, err
+		}
+		return parsed.Format(time.DateOnly), nil
 	default:
 		return trimmed, nil
 	}

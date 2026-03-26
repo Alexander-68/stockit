@@ -82,14 +82,23 @@ HTMX-like updates without full page refresh.
 
 Key Database Schema (SQLite): 
 
-* Users Table: usr\_id (unique), usr\_login\_name, usr\_password, usr\_role.
-* Customers: cus\_id (unique), cus\_name\_en, cus\_name\_zh, cus\_address\_en, cus\_address\_zh, cus\_phone, cus\_ship\_address\_en, cus\_ship\_address\_zh, cus\_contact\_name, cust\_contact\_email, Users:usr\_id, cus\_status (active, inactive).
+* Users Table: usr\_id (unique), usr\_login\_name, usr\_password, usr\_role, usr\_note.
+* Customers: cus\_id (unique), cus\_name\_en, cus\_name\_zh, cus\_address\_en, cus\_address\_zh, cus\_phone, cus\_ship\_address\_en, cus\_ship\_address\_zh, cus\_contact\_name, cust\_contact\_email, cus\_note, Users:usr\_id, cus\_status (active, inactive).
 * Suppliers:  sup\_id (unique), sup\_code, sup\_name\_en, sup\_name\_zh, sup\_type (service,products…), sup\_contact\_name, sup\_contact\_phone, sup\_contact\_email, sup\_contact\_messanger, sup\_fax, sup\_address\_en, sup\_address\_zh, sup\_factory\_adress\_zh, sup\_website, sup\_catalogue\_url, sup\_bank\_name, sup\_bank\_account, sup\_vat\_number, sup\_certificates, sup\_note, Users:usr\_id, sup\_status.
-* Locations: loc\_id (unique), loc\_name, loc\_address\_en, loc\_address\_zh, loc\_zone (storage, assembly, …), Users:usr\_id, loc\_status.
-* Items:  itm\_id (unique), itm\_sku, itm\_model, itm\_description, itm\_value, itm\_type (final, part, assembly), itm\_pic (BLOG), itm\_measure\_unit, Users:usr\_id (who created this item usr\_id), itm\_status (active, inactive).
-* Bill Of Material (BOM): bom\_id(unique), bom\_doc\_number, Items:itm\_id, bom\_note, Users:usr\_id, bom\_status.
+* Locations: loc\_id (unique), loc\_name, loc\_address\_en, loc\_address\_zh, loc\_zone (storage, assembly, …), loc\_note, Users:usr\_id, loc\_status.
+* Items:  itm\_id (unique), itm\_sku, itm\_model, itm\_description, itm\_value, itm\_type (final, part, assembly), itm\_pic (BLOG), itm\_measure\_unit, itm\_note, Users:usr\_id (who created this item usr\_id), itm\_status (active, inactive).
+* Bill Of Material (BOM): bom\_id(unique), bom\_doc\_number, bom\_doc\_date, Items:itm\_id, bom\_note, Users:usr\_id, bom\_status.
 
   * BOM components: boc\_id, BOM:bom\_id, Items:itm\_id, boc\_qty, boc\_note. (ON DELETE BOM:bom\_id CASCADE)
+* Quote: qot\_id(unique), Suppliers:sup\_id, qot\_doc\_number, qot\_doc\_date, Item:itm\_id, Users:usr\_id, qot\_status (active, inactive), qot\_note.
+
+  * Quote components: qoc\_id, Quote:qot\_id, Items:itm\_id, qot\_moq, qot\_qty, qot\_price, qot\_currency (USD, TWD, CNY, EUR), qot\_lead\_time. (ON DELETE Quote:qot\_id CASCADE)
+* Purchase Order (POR): por\_id(unique), Suppliers:sup\_id, por\_doc\_number, por\_doc\_date, Items:itm\_id, por\_ship\_date, por\_paid\_date, Users:usr\_id, por\_status (issued, approved, sent, confirmed, paid, prepared, shipped, delivered, received, complete, inactive), por\_note.
+
+  * PO components: poc\_id, POR:por\_id, Items:itm\_id, poc\_qty, poc\_price, poc\_currency (USD, TWD, CNY, EUR), poc\_shipped\_date, poc\_delivered\_date, poc\_delivered\_qty, poc\_received\_date, poc\_received\_qty. (ON DELETE POR:por\_id CASCADE)
+* Sales Order: sor\_id(unique), Customers:cus\_id, sor\_doc\_number, sor\_doc\_date, sor\_ship\_date, sor\_paid\_date, Users:usr\_id, sor\_status (confirmed, preparing, prepared, shipped, paid, complete, inactive), sor\_note.
+
+  * Sales Order components: soc\_id, Sales Order:sor\_id, Items:itm\_id, sor\_qty, sor\_price, sor\_currency (USD, TWD, CNY, EUR), sor\_ship\_date, sor\_shipped\_date, sor\_shipped\_qty, sor\_shipped\_trackno, soc\_note. (ON DELETE Sales Order:sor\_id CASCADE)
 
 
 

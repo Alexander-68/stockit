@@ -46,9 +46,20 @@
     if (!panel) {
       return;
     }
+    const hat = panel.querySelector("[data-stockit-parent-hat].is-selected");
+    if (hat) {
+      hat.classList.remove("is-selected");
+    }
     panel.querySelectorAll(".stockit-row.is-selected").forEach(function (row) {
       row.classList.remove("is-selected");
     });
+  }
+
+  function parentHat(panel) {
+    if (!panel) {
+      return null;
+    }
+    return panel.querySelector("[data-stockit-parent-hat]");
   }
 
   function currentRows(panel) {
@@ -63,6 +74,26 @@
       return null;
     }
     return panel.querySelector("#table-body .stockit-row.is-selected");
+  }
+
+  function selectedParentHat(panel) {
+    if (!panel) {
+      return null;
+    }
+    return panel.querySelector("[data-stockit-parent-hat].is-selected");
+  }
+
+  function selectedEntry(panel) {
+    return selectedParentHat(panel) || selectedRow(panel);
+  }
+
+  function currentEntries(panel) {
+    const entries = [];
+    const hat = parentHat(panel);
+    if (hat) {
+      entries.push(hat);
+    }
+    return entries.concat(currentRows(panel));
   }
 
   function ensureRowVisible(panel, row) {
@@ -119,6 +150,16 @@
     }
   }
 
+  function setActiveParentHat(hat) {
+    const panel = currentPanel();
+    if (!panel || !hat) {
+      return;
+    }
+
+    clearSelectedRow();
+    hat.classList.add("is-selected");
+  }
+
   function pageRowStep(panel, rows) {
     const wrap = panel.querySelector(".stockit-table-wrap");
     if (!wrap || rows.length === 0) {
@@ -135,19 +176,25 @@
   function moveActiveRow(direction, usePageStep) {
     const panel = currentPanel();
     const rows = currentRows(panel);
-    if (!panel || rows.length === 0) {
+    const entries = currentEntries(panel);
+    if (!panel || entries.length === 0) {
       return;
     }
 
-    const current = selectedRow(panel);
+    const current = selectedEntry(panel);
     const step = usePageStep ? pageRowStep(panel, rows) : 1;
-    let nextIndex = direction > 0 ? 0 : rows.length - 1;
+    let nextIndex = direction > 0 ? 0 : entries.length - 1;
     if (current) {
-      const currentIndex = rows.indexOf(current);
-      nextIndex = Math.max(0, Math.min(rows.length - 1, currentIndex + (direction * step)));
+      const currentIndex = entries.indexOf(current);
+      nextIndex = Math.max(0, Math.min(entries.length - 1, currentIndex + (direction * step)));
     }
 
-    setActiveRow(rows[nextIndex], { loadChild: false });
+    const nextEntry = entries[nextIndex];
+    if (nextEntry && nextEntry.matches("[data-stockit-parent-hat]")) {
+      setActiveParentHat(nextEntry);
+      return;
+    }
+    setActiveRow(nextEntry, { loadChild: false });
   }
 
   function panelParentContext(panel, table) {
@@ -319,8 +366,20 @@
   }
 
   function openSelectedRow(panel) {
+    if (!panel) {
+      return;
+    }
+
+    const hat = selectedParentHat(panel);
+    if (hat) {
+      if (panel.dataset.parentTable && panel.dataset.parentId && !hat.disabled) {
+        openForm(panel.dataset.parentTable, panel.dataset.parentId);
+      }
+      return;
+    }
+
     const row = selectedRow(panel);
-    if (!panel || !row) {
+    if (!row) {
       return;
     }
 
@@ -561,7 +620,7 @@
         if (event.shiftKey) {
           return;
         }
-        if (!selectedRow(panel)) {
+        if (!selectedEntry(panel)) {
           return;
         }
         event.preventDefault();

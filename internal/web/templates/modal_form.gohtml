@@ -75,6 +75,8 @@
       <input class="stockit-input stockit-field-control block w-full" type="password" name="{{ $field.Column }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else if eq $field.Kind "blob" }}
       <input class="stockit-file-input stockit-field-control block w-full text-sm" type="file" name="{{ $field.Column }}" accept="{{ $field.Accept }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
+      {{ else if eq $field.Kind "date" }}
+      <input class="stockit-input stockit-field-control block w-full" type="date" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else if eq $field.Kind "integer" }}
       <input class="stockit-input stockit-field-control block w-full" type="number" step="1" name="{{ $field.Column }}" value="{{ $field.Value }}" {{ if $field.Required }}required{{ end }} {{ if $field.Autofocus }}autofocus{{ end }}>
       {{ else if eq $field.Kind "real" }}

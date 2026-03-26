@@ -1,6 +1,6 @@
 # StockIt
 
-StockIt is a self-contained warehouse management app built in Go with a server-rendered UI using HTMX and bundled Tailwind CSS. It uses SQLite through `modernc.org/sqlite`, embeds its web assets, and starts with a prebuilt schema for warehouse master data and BOM management.
+StockIt is a self-contained warehouse management app built in Go with a server-rendered UI using HTMX and bundled Tailwind CSS. It uses SQLite through `modernc.org/sqlite`, embeds its web assets, and starts with a prebuilt schema for warehouse master data, BOM management, and purchase-order tracking.
 
 ## Implemented Initial MVP
 
@@ -12,6 +12,12 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - `items`
   - `boms`
   - `bom_components`
+  - `quotes`
+  - `quote_components`
+  - `purchase_orders`
+  - `po_components`
+  - `sales_orders`
+  - `sales_order_components`
 - Automatic default user seeding:
   - `admin / admin`
   - `user / user`
@@ -35,8 +41,9 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - viewport-sized initial row loading plus scroll-based lazy loading
   - main table keyboard controls for row navigation and actions: `Up` / `Down` / `PageUp` / `PageDown` select rows, `Enter` edits, `Delete` removes, and `Insert` / `+` create
   - compact modal create/edit forms with header actions and floating field captions
+  - date-aware form controls for document, shipping, delivery, payment, and receipt dates
   - modal keyboard shortcuts: `Esc` cancels, `Enter` saves, and textarea fields use `Shift+Enter` / `Ctrl+Enter` for new lines
-  - parent/subtable navigation for BOM -> BOM Components, with BOM row selection opening the filtered child list
+  - parent/subtable navigation for BOM -> BOM Components, Quote -> Quote Components, Purchase Order -> PO Components, and Sales Order -> Sales Order Components, with parent row selection opening the filtered child list
   - selected-parent context shown above subtable lists, with child create/edit forms inheriting and hiding the parent foreign key
   - compact dropdown selectors for status fields and foreign-key fields using key reference columns
   - creator-managed `usr_id` fields that are set automatically from the logged-in user instead of being selectable in forms
@@ -49,7 +56,7 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - `guest`: read-only access to non-user tables
 - Guard against deleting the last admin account.
 - Minimal JSON API for table list/get/create/update/delete plus `/api/me`.
-- Extensive integration and store tests covering login, roles, CSRF protection, CRUD, CSV import, sorting, hidden password hashes, BOM cascade behavior, and parent/subtable BOM flows.
+- Extensive integration and store tests covering login, roles, CSRF protection, CRUD, CSV import, sorting, hidden password hashes, BOM, quote, purchase-order, and sales-order cascade behavior, schema migration for new columns, and parent/subtable flows.
 
 ## Notes
 

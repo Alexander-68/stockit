@@ -488,8 +488,14 @@ func TestBOMSubtableFlowUsesParentContext(t *testing.T) {
 	if !strings.Contains(childPanelBody, "Alpha component") {
 		t.Fatalf("child panel missing filtered component: %s", childPanelBody)
 	}
+	if !strings.Contains(childPanelBody, `data-stockit-parent-hat="true"`) {
+		t.Fatalf("child panel missing selectable parent hat: %s", childPanelBody)
+	}
 	if strings.Contains(childPanelBody, "Beta component") {
 		t.Fatalf("child panel should exclude components from other BOMs: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, `StockIt.sortTable('bom_id')`) {
+		t.Fatalf("child panel should hide the inherited bom_id column: %s", childPanelBody)
 	}
 	if strings.Contains(childPanelBody, "Selected BOM") || !strings.Contains(childPanelBody, ">BOM</span>") || !strings.Contains(childPanelBody, "BOM-ALPHA") {
 		t.Fatalf("child panel missing compact BOM context line: %s", childPanelBody)
@@ -566,6 +572,567 @@ func TestBOMSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
+func TestPurchaseOrderSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	supplierA := createRecord(t, client, token, ts.URL, "suppliers", map[string]any{
+		"sup_code":    "SUP-PO-A",
+		"sup_name_en": "Supplier PO A",
+		"sup_status":  "Active",
+	})
+	supplierB := createRecord(t, client, token, ts.URL, "suppliers", map[string]any{
+		"sup_code":    "SUP-PO-B",
+		"sup_name_en": "Supplier PO B",
+		"sup_status":  "Active",
+	})
+
+	finalA := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "PO-FINAL-A",
+		"itm_model":        "PO Final A",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	finalB := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "PO-FINAL-B",
+		"itm_model":        "PO Final B",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	componentItem := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "PO-COMP-01",
+		"itm_model":        "PO Component",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+
+	porA := createRecord(t, client, token, ts.URL, "purchase_orders", map[string]any{
+		"sup_id":         supplierA,
+		"por_doc_number": "PO-ALPHA",
+		"por_doc_date":   "2026-03-20",
+		"itm_id":         finalA,
+		"por_ship_date":  "2026-03-22",
+		"por_paid_date":  "2026-03-21",
+		"por_status":     "approved",
+		"por_note":       "Primary alpha PO",
+	})
+	porB := createRecord(t, client, token, ts.URL, "purchase_orders", map[string]any{
+		"sup_id":         supplierB,
+		"por_doc_number": "PO-BETA",
+		"por_doc_date":   "2026-03-23",
+		"itm_id":         finalB,
+		"por_status":     "sent",
+		"por_note":       "Secondary beta PO",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "po_components", map[string]any{
+		"por_id":             porA,
+		"itm_id":             componentItem,
+		"poc_qty":            2,
+		"poc_price":          3.25,
+		"poc_currency":       "USD",
+		"poc_shipped_date":   "2026-03-22",
+		"poc_delivered_date": "2026-03-24",
+		"poc_delivered_qty":  2,
+		"poc_received_date":  "2026-03-25",
+		"poc_received_qty":   2,
+	})
+	_ = createRecord(t, client, token, ts.URL, "po_components", map[string]any{
+		"por_id":           porB,
+		"itm_id":           componentItem,
+		"poc_qty":          5,
+		"poc_price":        4.1,
+		"poc_currency":     "TWD",
+		"poc_received_qty": 1,
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="po_components"`) {
+		t.Fatalf("dashboard should not expose po_components in the top nav: %s", dashboardBody)
+	}
+
+	poPanelResp := get(t, client, ts.URL+"/tables/purchase_orders?limit=30")
+	poPanelBody := readBody(t, poPanelResp.Body)
+	if poPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("purchase_orders panel status = %d, want 200", poPanelResp.StatusCode)
+	}
+	if !strings.Contains(poPanelBody, `data-child-table="po_components"`) {
+		t.Fatalf("purchase_orders panel should advertise its subtable: %s", poPanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/po_components?limit=30&parent_table=purchase_orders&parent_id="+porA+"&parent_field=por_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("po_components child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "PO-ALPHA") || !strings.Contains(childPanelBody, "Primary alpha PO") {
+		t.Fatalf("child panel missing purchase order context: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, `data-stockit-parent-hat="true"`) {
+		t.Fatalf("child panel missing selectable purchase order hat: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "USD") {
+		t.Fatalf("child panel missing alpha component row: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "TWD") {
+		t.Fatalf("child panel should exclude components from other purchase orders: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, `StockIt.sortTable('por_id')`) {
+		t.Fatalf("child panel should hide the inherited por_id column: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "Selected Purchase Order") || !strings.Contains(childPanelBody, ">Purchase Order</span>") {
+		t.Fatalf("child panel missing compact purchase order context line: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, supplierA+" | SUP-PO-A | Supplier PO A") || !strings.Contains(childPanelBody, finalA+" | PO-FINAL-A | PO Final A") {
+		t.Fatalf("child panel should show compact purchase order reference labels: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, componentItem+" | PO-COMP-01 | PO Component") {
+		t.Fatalf("child panel should render child item reference details: %s", childPanelBody)
+	}
+
+	poFormResp := get(t, client, ts.URL+"/tables/purchase_orders/form?id="+porA)
+	poFormBody := readBody(t, poFormResp.Body)
+	if poFormResp.StatusCode != http.StatusOK {
+		t.Fatalf("purchase_orders form status = %d, want 200", poFormResp.StatusCode)
+	}
+	if !strings.Contains(poFormBody, `type="date" name="por_doc_date" value="2026-03-20"`) {
+		t.Fatalf("purchase order form should render por_doc_date as a date input: %s", poFormBody)
+	}
+	if !strings.Contains(poFormBody, `<option value="approved" selected>approved</option>`) {
+		t.Fatalf("purchase order form should render por_status as a selected dropdown: %s", poFormBody)
+	}
+	if !strings.Contains(poFormBody, supplierA+` | SUP-PO-A | Supplier PO A`) {
+		t.Fatalf("purchase order form should show compact supplier reference labels: %s", poFormBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/po_components/form?id="+componentA+"&parent_table=purchase_orders&parent_id="+porA+"&parent_field=por_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("po_components child form status = %d, want 200", formResp.StatusCode)
+	}
+	if strings.Contains(formBody, `name="por_id"`) && strings.Contains(formBody, `<select class="stockit-select stockit-field-control block w-full" name="por_id"`) {
+		t.Fatalf("child form should hide the inherited por_id selector: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="por_id" value="`+porA+`"`) {
+		t.Fatalf("child form should include hidden por_id: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="date" name="poc_shipped_date" value="2026-03-22"`) {
+		t.Fatalf("po component form should render shipped date as a date input: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/po_components/save", url.Values{
+		"parent_table":      {"purchase_orders"},
+		"parent_id":         {porA},
+		"parent_field":      {"por_id"},
+		"itm_id":            {componentItem},
+		"poc_qty":           {"7"},
+		"poc_price":         {"5.50"},
+		"poc_currency":      {"EUR"},
+		"poc_shipped_date":  {"2026-03-26"},
+		"poc_delivered_qty": {"7"},
+		"poc_received_date": {"2026-03-27"},
+		"poc_received_qty":  {"6"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("po_components child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/po_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("po_components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["poc_currency"]) != "EUR" || fmt.Sprint(row["poc_qty"]) != "7" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["por_id"]) != porA {
+			t.Fatalf("auto-linked po component attached to por_id=%v, want %s", row["por_id"], porA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked po component not found in API payload: %+v", payload.Rows)
+	}
+}
+
+func TestQuoteSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	supplierA := createRecord(t, client, token, ts.URL, "suppliers", map[string]any{
+		"sup_code":    "SUP-QT-A",
+		"sup_name_en": "Supplier Quote A",
+		"sup_status":  "Active",
+	})
+	supplierB := createRecord(t, client, token, ts.URL, "suppliers", map[string]any{
+		"sup_code":    "SUP-QT-B",
+		"sup_name_en": "Supplier Quote B",
+		"sup_status":  "Active",
+	})
+
+	finalA := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "QT-FINAL-A",
+		"itm_model":        "Quote Final A",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	finalB := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "QT-FINAL-B",
+		"itm_model":        "Quote Final B",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	componentItem := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "QT-COMP-01",
+		"itm_model":        "Quote Component",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+
+	quoteA := createRecord(t, client, token, ts.URL, "quotes", map[string]any{
+		"sup_id":         supplierA,
+		"qot_doc_number": "QT-ALPHA",
+		"qot_doc_date":   "2026-03-20",
+		"itm_id":         finalA,
+		"qot_status":     "active",
+	})
+	quoteB := createRecord(t, client, token, ts.URL, "quotes", map[string]any{
+		"sup_id":         supplierB,
+		"qot_doc_number": "QT-BETA",
+		"qot_doc_date":   "2026-03-21",
+		"itm_id":         finalB,
+		"qot_status":     "inactive",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "quote_components", map[string]any{
+		"qot_id":        quoteA,
+		"itm_id":        componentItem,
+		"qot_moq":       10,
+		"qot_qty":       25,
+		"qot_price":     2.75,
+		"qot_currency":  "USD",
+		"qot_lead_time": "14 days",
+	})
+	_ = createRecord(t, client, token, ts.URL, "quote_components", map[string]any{
+		"qot_id":        quoteB,
+		"itm_id":        componentItem,
+		"qot_moq":       50,
+		"qot_qty":       100,
+		"qot_price":     3.2,
+		"qot_currency":  "TWD",
+		"qot_lead_time": "30 days",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="quote_components"`) {
+		t.Fatalf("dashboard should not expose quote_components in the top nav: %s", dashboardBody)
+	}
+
+	quotePanelResp := get(t, client, ts.URL+"/tables/quotes?limit=30")
+	quotePanelBody := readBody(t, quotePanelResp.Body)
+	if quotePanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("quotes panel status = %d, want 200", quotePanelResp.StatusCode)
+	}
+	if !strings.Contains(quotePanelBody, `data-child-table="quote_components"`) {
+		t.Fatalf("quotes panel should advertise its subtable: %s", quotePanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/quote_components?limit=30&parent_table=quotes&parent_id="+quoteA+"&parent_field=qot_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("quote_components child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "QT-ALPHA") {
+		t.Fatalf("child panel missing quote context: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, `data-stockit-parent-hat="true"`) {
+		t.Fatalf("child panel missing selectable quote hat: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "14 days") {
+		t.Fatalf("child panel missing alpha quote component row: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "30 days") {
+		t.Fatalf("child panel should exclude components from other quotes: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, `StockIt.sortTable('qot_id')`) {
+		t.Fatalf("child panel should hide the inherited qot_id column: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "Selected Quote") || !strings.Contains(childPanelBody, ">Quote</span>") {
+		t.Fatalf("child panel missing compact quote context line: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, supplierA+" | SUP-QT-A | Supplier Quote A") || !strings.Contains(childPanelBody, finalA+" | QT-FINAL-A | Quote Final A") {
+		t.Fatalf("child panel should show compact quote reference labels: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, componentItem+" | QT-COMP-01 | Quote Component") {
+		t.Fatalf("child panel should render child item reference details: %s", childPanelBody)
+	}
+
+	quoteFormResp := get(t, client, ts.URL+"/tables/quotes/form?id="+quoteA)
+	quoteFormBody := readBody(t, quoteFormResp.Body)
+	if quoteFormResp.StatusCode != http.StatusOK {
+		t.Fatalf("quotes form status = %d, want 200", quoteFormResp.StatusCode)
+	}
+	if !strings.Contains(quoteFormBody, `type="date" name="qot_doc_date" value="2026-03-20"`) {
+		t.Fatalf("quote form should render qot_doc_date as a date input: %s", quoteFormBody)
+	}
+	if !strings.Contains(quoteFormBody, `<option value="active" selected>active</option>`) {
+		t.Fatalf("quote form should render qot_status as a selected dropdown: %s", quoteFormBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/quote_components/form?id="+componentA+"&parent_table=quotes&parent_id="+quoteA+"&parent_field=qot_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("quote_components child form status = %d, want 200", formResp.StatusCode)
+	}
+	if strings.Contains(formBody, `name="qot_id"`) && strings.Contains(formBody, `<select class="stockit-select stockit-field-control block w-full" name="qot_id"`) {
+		t.Fatalf("child form should hide the inherited qot_id selector: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="qot_id" value="`+quoteA+`"`) {
+		t.Fatalf("child form should include hidden qot_id: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/quote_components/save", url.Values{
+		"parent_table":  {"quotes"},
+		"parent_id":     {quoteA},
+		"parent_field":  {"qot_id"},
+		"itm_id":        {componentItem},
+		"qot_moq":       {"12"},
+		"qot_qty":       {"36"},
+		"qot_price":     {"2.95"},
+		"qot_currency":  {"EUR"},
+		"qot_lead_time": {"21 days"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("quote_components child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/quote_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("quote_components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["qot_currency"]) != "EUR" || fmt.Sprint(row["qot_qty"]) != "36" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["qot_id"]) != quoteA {
+			t.Fatalf("auto-linked quote component attached to qot_id=%v, want %s", row["qot_id"], quoteA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked quote component not found in API payload: %+v", payload.Rows)
+	}
+}
+
+func TestSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	customerA := createRecord(t, client, token, ts.URL, "customers", map[string]any{
+		"cus_name_en": "Customer SO A",
+		"cus_status":  "Active",
+	})
+	customerB := createRecord(t, client, token, ts.URL, "customers", map[string]any{
+		"cus_name_en": "Customer SO B",
+		"cus_status":  "Active",
+	})
+	componentItem := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "SO-COMP-01",
+		"itm_model":        "Sales Component",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+
+	orderA := createRecord(t, client, token, ts.URL, "sales_orders", map[string]any{
+		"cus_id":         customerA,
+		"sor_doc_number": "SO-ALPHA",
+		"sor_doc_date":   "2026-03-20",
+		"sor_ship_date":  "2026-03-22",
+		"sor_paid_date":  "2026-03-23",
+		"sor_status":     "confirmed",
+	})
+	orderB := createRecord(t, client, token, ts.URL, "sales_orders", map[string]any{
+		"cus_id":         customerB,
+		"sor_doc_number": "SO-BETA",
+		"sor_doc_date":   "2026-03-21",
+		"sor_status":     "prepared",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "sales_order_components", map[string]any{
+		"sor_id":              orderA,
+		"itm_id":              componentItem,
+		"sor_qty":             8,
+		"sor_price":           11.5,
+		"sor_currency":        "USD",
+		"sor_ship_date":       "2026-03-22",
+		"sor_shipped_date":    "2026-03-24",
+		"sor_shipped_qty":     4,
+		"sor_shipped_trackno": "TRACK-A",
+	})
+	_ = createRecord(t, client, token, ts.URL, "sales_order_components", map[string]any{
+		"sor_id":              orderB,
+		"itm_id":              componentItem,
+		"sor_qty":             5,
+		"sor_price":           9.8,
+		"sor_currency":        "TWD",
+		"sor_shipped_trackno": "TRACK-B",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="sales_order_components"`) {
+		t.Fatalf("dashboard should not expose sales_order_components in the top nav: %s", dashboardBody)
+	}
+
+	orderPanelResp := get(t, client, ts.URL+"/tables/sales_orders?limit=30")
+	orderPanelBody := readBody(t, orderPanelResp.Body)
+	if orderPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("sales_orders panel status = %d, want 200", orderPanelResp.StatusCode)
+	}
+	if !strings.Contains(orderPanelBody, `data-child-table="sales_order_components"`) {
+		t.Fatalf("sales_orders panel should advertise its subtable: %s", orderPanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/sales_order_components?limit=30&parent_table=sales_orders&parent_id="+orderA+"&parent_field=sor_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("sales_order_components child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "SO-ALPHA") {
+		t.Fatalf("child panel missing sales order context: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, `data-stockit-parent-hat="true"`) {
+		t.Fatalf("child panel missing selectable sales order hat: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "TRACK-A") {
+		t.Fatalf("child panel missing alpha sales order component row: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "TRACK-B") {
+		t.Fatalf("child panel should exclude components from other sales orders: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, `StockIt.sortTable('sor_id')`) {
+		t.Fatalf("child panel should hide the inherited sor_id column: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "Selected Sales Order") || !strings.Contains(childPanelBody, ">Sales Order</span>") {
+		t.Fatalf("child panel missing compact sales order context line: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, customerA+" | Customer SO A") {
+		t.Fatalf("child panel should show compact sales order customer label: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, componentItem+" | SO-COMP-01 | Sales Component") {
+		t.Fatalf("child panel should render child item reference details: %s", childPanelBody)
+	}
+
+	orderFormResp := get(t, client, ts.URL+"/tables/sales_orders/form?id="+orderA)
+	orderFormBody := readBody(t, orderFormResp.Body)
+	if orderFormResp.StatusCode != http.StatusOK {
+		t.Fatalf("sales_orders form status = %d, want 200", orderFormResp.StatusCode)
+	}
+	if !strings.Contains(orderFormBody, `type="date" name="sor_doc_date" value="2026-03-20"`) {
+		t.Fatalf("sales order form should render sor_doc_date as a date input: %s", orderFormBody)
+	}
+	if !strings.Contains(orderFormBody, `type="date" name="sor_paid_date" value="2026-03-23"`) {
+		t.Fatalf("sales order form should render sor_paid_date as a date input: %s", orderFormBody)
+	}
+	if !strings.Contains(orderFormBody, `<option value="confirmed" selected>confirmed</option>`) {
+		t.Fatalf("sales order form should render sor_status as a selected dropdown: %s", orderFormBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/sales_order_components/form?id="+componentA+"&parent_table=sales_orders&parent_id="+orderA+"&parent_field=sor_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("sales_order_components child form status = %d, want 200", formResp.StatusCode)
+	}
+	if strings.Contains(formBody, `name="sor_id"`) && strings.Contains(formBody, `<select class="stockit-select stockit-field-control block w-full" name="sor_id"`) {
+		t.Fatalf("child form should hide the inherited sor_id selector: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="sor_id" value="`+orderA+`"`) {
+		t.Fatalf("child form should include hidden sor_id: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="date" name="sor_ship_date" value="2026-03-22"`) {
+		t.Fatalf("sales order component form should render ship date as a date input: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/sales_order_components/save", url.Values{
+		"parent_table":        {"sales_orders"},
+		"parent_id":           {orderA},
+		"parent_field":        {"sor_id"},
+		"itm_id":              {componentItem},
+		"sor_qty":             {"9"},
+		"sor_price":           {"12.40"},
+		"sor_currency":        {"EUR"},
+		"sor_ship_date":       {"2026-03-25"},
+		"sor_shipped_date":    {"2026-03-26"},
+		"sor_shipped_qty":     {"9"},
+		"sor_shipped_trackno": {"TRACK-C"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("sales_order_components child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/sales_order_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("sales_order_components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["sor_shipped_trackno"]) != "TRACK-C" || fmt.Sprint(row["sor_qty"]) != "9" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["sor_id"]) != orderA {
+			t.Fatalf("auto-linked sales order component attached to sor_id=%v, want %s", row["sor_id"], orderA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked sales order component not found in API payload: %+v", payload.Rows)
+	}
+}
+
 func TestDeleteParentFromSubtableContextEmitsRecordDeletedTrigger(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
@@ -620,6 +1187,7 @@ func TestSeedReviewDataset(t *testing.T) {
 	login(t, client, ts.URL, "admin", "admin")
 	token := sessionCookieValue(t, client, ts.URL)
 
+	customerIDs := make([]string, 0, 3)
 	for _, payload := range []map[string]any{
 		{
 			"cus_name_en":        "Review Customer A",
@@ -646,9 +1214,10 @@ func TestSeedReviewDataset(t *testing.T) {
 			"cus_status":         "Hold",
 		},
 	} {
-		createRecord(t, client, token, ts.URL, "customers", payload)
+		customerIDs = append(customerIDs, createRecord(t, client, token, ts.URL, "customers", payload))
 	}
 
+	supplierIDs := make([]string, 0, 3)
 	for _, payload := range []map[string]any{
 		{
 			"sup_code":          "SUP-001",
@@ -675,7 +1244,7 @@ func TestSeedReviewDataset(t *testing.T) {
 			"sup_status":        "Active",
 		},
 	} {
-		createRecord(t, client, token, ts.URL, "suppliers", payload)
+		supplierIDs = append(supplierIDs, createRecord(t, client, token, ts.URL, "suppliers", payload))
 	}
 
 	for _, payload := range []map[string]any{
@@ -686,7 +1255,7 @@ func TestSeedReviewDataset(t *testing.T) {
 		createRecord(t, client, token, ts.URL, "locations", payload)
 	}
 
-	itemIDs := make([]string, 0, 3)
+	itemIDs := make([]string, 0, 20)
 	for _, payload := range []map[string]any{
 		{
 			"itm_sku":          "RV-FG-01",
@@ -707,33 +1276,306 @@ func TestSeedReviewDataset(t *testing.T) {
 			"itm_status":       "Under Review",
 		},
 		{
+			"itm_sku":          "RV-FG-03",
+			"itm_model":        "Review Final C",
+			"itm_description":  "Finished good for review C",
+			"itm_type":         "final",
+			"itm_measure_unit": "pcs",
+			"itm_value":        152.0,
+			"itm_status":       "Active",
+		},
+		{
 			"itm_sku":          "RV-PT-01",
-			"itm_model":        "Review Part",
+			"itm_model":        "Review Part Alpha",
 			"itm_description":  "Component for review",
 			"itm_type":         "part",
 			"itm_measure_unit": "pcs",
 			"itm_value":        10.25,
 			"itm_status":       "Active",
 		},
+		{
+			"itm_sku":          "RV-PT-02",
+			"itm_model":        "Review Part Beta",
+			"itm_description":  "Precision bracket for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        8.5,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-03",
+			"itm_model":        "Review Part Gamma",
+			"itm_description":  "Cable assembly for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        6.8,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-04",
+			"itm_model":        "Review Part Delta",
+			"itm_description":  "Fastener kit for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "set",
+			"itm_value":        3.45,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-05",
+			"itm_model":        "Review Part Epsilon",
+			"itm_description":  "Sensor module for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        18.25,
+			"itm_status":       "Under Review",
+		},
+		{
+			"itm_sku":          "RV-PT-06",
+			"itm_model":        "Review Part Zeta",
+			"itm_description":  "Motor mount for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        7.9,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-07",
+			"itm_model":        "Review Part Eta",
+			"itm_description":  "Control knob for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        2.75,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-08",
+			"itm_model":        "Review Part Theta",
+			"itm_description":  "Display bezel for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        4.4,
+			"itm_status":       "Hold",
+		},
+		{
+			"itm_sku":          "RV-PT-09",
+			"itm_model":        "Review Part Iota",
+			"itm_description":  "Packaging insert for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        1.1,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-AS-01",
+			"itm_model":        "Review Assembly Alpha",
+			"itm_description":  "Assembly fixture alpha",
+			"itm_type":         "assembly",
+			"itm_measure_unit": "set",
+			"itm_value":        42.0,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-AS-02",
+			"itm_model":        "Review Assembly Beta",
+			"itm_description":  "Assembly fixture beta",
+			"itm_type":         "assembly",
+			"itm_measure_unit": "set",
+			"itm_value":        45.5,
+			"itm_status":       "Under Review",
+		},
+		{
+			"itm_sku":          "RV-AS-03",
+			"itm_model":        "Review Assembly Gamma",
+			"itm_description":  "Assembly fixture gamma",
+			"itm_type":         "assembly",
+			"itm_measure_unit": "set",
+			"itm_value":        47.75,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-AS-04",
+			"itm_model":        "Review Assembly Delta",
+			"itm_description":  "Assembly fixture delta",
+			"itm_type":         "assembly",
+			"itm_measure_unit": "set",
+			"itm_value":        49.9,
+			"itm_status":       "Hold",
+		},
+		{
+			"itm_sku":          "RV-FG-04",
+			"itm_model":        "Review Final D",
+			"itm_description":  "Finished good for review D",
+			"itm_type":         "final",
+			"itm_measure_unit": "pcs",
+			"itm_value":        165.0,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-FG-05",
+			"itm_model":        "Review Final E",
+			"itm_description":  "Finished good for review E",
+			"itm_type":         "final",
+			"itm_measure_unit": "pcs",
+			"itm_value":        172.5,
+			"itm_status":       "Under Review",
+		},
+		{
+			"itm_sku":          "RV-FG-06",
+			"itm_model":        "Review Final F",
+			"itm_description":  "Finished good for review F",
+			"itm_type":         "final",
+			"itm_measure_unit": "pcs",
+			"itm_value":        181.2,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-10",
+			"itm_model":        "Review Part Kappa",
+			"itm_description":  "Switch housing for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        5.95,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-11",
+			"itm_model":        "Review Part Lambda",
+			"itm_description":  "Ribbon cable for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        3.95,
+			"itm_status":       "Active",
+		},
+		{
+			"itm_sku":          "RV-PT-12",
+			"itm_model":        "Review Part Mu",
+			"itm_description":  "Connector block for review",
+			"itm_type":         "part",
+			"itm_measure_unit": "pcs",
+			"itm_value":        6.15,
+			"itm_status":       "Active",
+		},
 	} {
 		itemIDs = append(itemIDs, createRecord(t, client, token, ts.URL, "items", payload))
 	}
+	finalItemIDs := itemIDs[:3]
+	componentItemIDs := itemIDs[3:12]
 
 	bomIDs := make([]string, 0, 3)
 	for _, payload := range []map[string]any{
-		{"bom_doc_number": "RV-BOM-01", "itm_id": itemIDs[0], "bom_note": "Review BOM A", "bom_status": "Under Review"},
-		{"bom_doc_number": "RV-BOM-02", "itm_id": itemIDs[1], "bom_note": "Review BOM B", "bom_status": "Active"},
-		{"bom_doc_number": "RV-BOM-03", "itm_id": itemIDs[0], "bom_note": "Review BOM C", "bom_status": "Draft"},
+		{"bom_doc_number": "RV-BOM-01", "itm_id": finalItemIDs[0], "bom_note": "Review BOM A", "bom_status": "Under Review"},
+		{"bom_doc_number": "RV-BOM-02", "itm_id": finalItemIDs[1], "bom_note": "Review BOM B", "bom_status": "Active"},
+		{"bom_doc_number": "RV-BOM-03", "itm_id": finalItemIDs[2], "bom_note": "Review BOM C", "bom_status": "Draft"},
 	} {
 		bomIDs = append(bomIDs, createRecord(t, client, token, ts.URL, "boms", payload))
 	}
 
+	for bomIndex, bomID := range bomIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "bom_components", map[string]any{
+				"bom_id":   bomID,
+				"itm_id":   componentItemIDs[(bomIndex*3)+lineIndex],
+				"boc_qty":  float64((bomIndex + 2) * (lineIndex + 1)),
+				"boc_note": fmt.Sprintf("Review BOM component %d%c", bomIndex+1, 'A'+lineIndex),
+			})
+		}
+	}
+
+	porIDs := make([]string, 0, 3)
 	for _, payload := range []map[string]any{
-		{"bom_id": bomIDs[0], "itm_id": itemIDs[2], "boc_qty": 5, "boc_note": "Review component line A"},
-		{"bom_id": bomIDs[1], "itm_id": itemIDs[2], "boc_qty": 8, "boc_note": "Review component line B"},
-		{"bom_id": bomIDs[2], "itm_id": itemIDs[2], "boc_qty": 2, "boc_note": "Review component line C"},
+		{
+			"sup_id":         supplierIDs[0],
+			"por_doc_number": "RV-PO-01",
+			"por_doc_date":   "2026-03-18",
+			"itm_id":         finalItemIDs[0],
+			"por_ship_date":  "2026-03-21",
+			"por_paid_date":  "2026-03-20",
+			"por_status":     "approved",
+			"por_note":       "Review PO A",
+		},
+		{
+			"sup_id":         supplierIDs[1],
+			"por_doc_number": "RV-PO-02",
+			"por_doc_date":   "2026-03-19",
+			"itm_id":         finalItemIDs[1],
+			"por_status":     "sent",
+			"por_note":       "Review PO B",
+		},
+		{
+			"sup_id":         supplierIDs[2],
+			"por_doc_number": "RV-PO-03",
+			"por_doc_date":   "2026-03-20",
+			"itm_id":         finalItemIDs[2],
+			"por_status":     "received",
+			"por_note":       "Review PO C",
+		},
 	} {
-		createRecord(t, client, token, ts.URL, "bom_components", payload)
+		porIDs = append(porIDs, createRecord(t, client, token, ts.URL, "purchase_orders", payload))
+	}
+
+	for orderIndex, porID := range porIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "po_components", map[string]any{
+				"por_id":             porID,
+				"itm_id":             componentItemIDs[(orderIndex*3)+lineIndex],
+				"poc_qty":            float64(5 + orderIndex + lineIndex),
+				"poc_price":          2.5 + float64(orderIndex) + (0.35 * float64(lineIndex)),
+				"poc_currency":       []string{"USD", "TWD", "EUR"}[lineIndex],
+				"poc_shipped_date":   fmt.Sprintf("2026-03-%02d", 21+(orderIndex*3)+lineIndex),
+				"poc_delivered_date": fmt.Sprintf("2026-03-%02d", 22+(orderIndex*3)+lineIndex),
+				"poc_delivered_qty":  float64(4 + orderIndex + lineIndex),
+				"poc_received_date":  fmt.Sprintf("2026-03-%02d", 23+(orderIndex*3)+lineIndex),
+				"poc_received_qty":   float64(4 + orderIndex + lineIndex),
+			})
+		}
+	}
+
+	quoteIDs := make([]string, 0, 3)
+	for _, payload := range []map[string]any{
+		{"sup_id": supplierIDs[0], "qot_doc_number": "RV-QT-01", "qot_doc_date": "2026-03-17", "itm_id": finalItemIDs[0], "qot_status": "active"},
+		{"sup_id": supplierIDs[1], "qot_doc_number": "RV-QT-02", "qot_doc_date": "2026-03-18", "itm_id": finalItemIDs[1], "qot_status": "inactive"},
+		{"sup_id": supplierIDs[2], "qot_doc_number": "RV-QT-03", "qot_doc_date": "2026-03-19", "itm_id": finalItemIDs[2], "qot_status": "active"},
+	} {
+		quoteIDs = append(quoteIDs, createRecord(t, client, token, ts.URL, "quotes", payload))
+	}
+
+	for quoteIndex, quoteID := range quoteIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "quote_components", map[string]any{
+				"qot_id":        quoteID,
+				"itm_id":        componentItemIDs[(quoteIndex*3)+lineIndex],
+				"qot_moq":       float64(10 + (quoteIndex * 5) + lineIndex),
+				"qot_qty":       float64(25 + (quoteIndex * 10) + (lineIndex * 5)),
+				"qot_price":     2.2 + float64(quoteIndex) + (0.2 * float64(lineIndex)),
+				"qot_currency":  []string{"USD", "TWD", "EUR"}[lineIndex],
+				"qot_lead_time": fmt.Sprintf("Review lead %d%c", quoteIndex+1, 'A'+lineIndex),
+			})
+		}
+	}
+
+	salesOrderIDs := make([]string, 0, 3)
+	for _, payload := range []map[string]any{
+		{"cus_id": customerIDs[0], "sor_doc_number": "RV-SO-01", "sor_doc_date": "2026-03-20", "sor_ship_date": "2026-03-22", "sor_paid_date": "2026-03-23", "sor_status": "confirmed"},
+		{"cus_id": customerIDs[1], "sor_doc_number": "RV-SO-02", "sor_doc_date": "2026-03-21", "sor_status": "prepared"},
+		{"cus_id": customerIDs[2], "sor_doc_number": "RV-SO-03", "sor_doc_date": "2026-03-22", "sor_status": "paid"},
+	} {
+		salesOrderIDs = append(salesOrderIDs, createRecord(t, client, token, ts.URL, "sales_orders", payload))
+	}
+
+	for salesIndex, salesOrderID := range salesOrderIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "sales_order_components", map[string]any{
+				"sor_id":              salesOrderID,
+				"itm_id":              componentItemIDs[(salesIndex*3)+lineIndex],
+				"sor_qty":             float64(4 + salesIndex + lineIndex),
+				"sor_price":           9.5 + float64(salesIndex) + (0.4 * float64(lineIndex)),
+				"sor_currency":        []string{"USD", "TWD", "EUR"}[lineIndex],
+				"sor_ship_date":       fmt.Sprintf("2026-03-%02d", 22+(salesIndex*3)+lineIndex),
+				"sor_shipped_date":    fmt.Sprintf("2026-03-%02d", 23+(salesIndex*3)+lineIndex),
+				"sor_shipped_qty":     float64(2 + salesIndex + lineIndex),
+				"sor_shipped_trackno": fmt.Sprintf("RV-SO-TRACK-%d%c", salesIndex+1, 'A'+lineIndex),
+			})
+		}
 	}
 
 	for _, tc := range []struct {
@@ -741,12 +1583,19 @@ func TestSeedReviewDataset(t *testing.T) {
 		check   string
 		minRows int
 	}{
+		{table: "users", check: "admin", minRows: 3},
 		{table: "customers", check: "Review Customer A", minRows: 3},
 		{table: "suppliers", check: "Review Supplier A", minRows: 3},
 		{table: "locations", check: "Main Warehouse", minRows: 3},
-		{table: "items", check: "RV-FG-01", minRows: 3},
+		{table: "items", check: "RV-FG-01", minRows: 20},
 		{table: "boms", check: "RV-BOM-01", minRows: 3},
-		{table: "bom_components", check: "Review component line A", minRows: 3},
+		{table: "bom_components", check: "Review BOM component 1A", minRows: 9},
+		{table: "purchase_orders", check: "RV-PO-01", minRows: 3},
+		{table: "po_components", check: "RV-PT-01", minRows: 9},
+		{table: "quotes", check: "RV-QT-01", minRows: 3},
+		{table: "quote_components", check: "Review lead 1A", minRows: 9},
+		{table: "sales_orders", check: "RV-SO-01", minRows: 3},
+		{table: "sales_order_components", check: "RV-SO-TRACK-1A", minRows: 9},
 	} {
 		resp := get(t, client, ts.URL+"/tables/"+tc.table+"?limit=40")
 		body := readBody(t, resp.Body)
@@ -1101,6 +1950,18 @@ func idColumn(table string) string {
 		return "bom_id"
 	case "bom_components":
 		return "boc_id"
+	case "purchase_orders":
+		return "por_id"
+	case "po_components":
+		return "poc_id"
+	case "quotes":
+		return "qot_id"
+	case "quote_components":
+		return "qoc_id"
+	case "sales_orders":
+		return "sor_id"
+	case "sales_order_components":
+		return "soc_id"
 	default:
 		return "id"
 	}
