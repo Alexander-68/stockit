@@ -86,7 +86,7 @@ Key Database Schema (SQLite):
 * Customers: cus\_id (unique), cus\_name\_en, cus\_name\_zh, cus\_address\_en, cus\_address\_zh, cus\_phone, cus\_ship\_address\_en, cus\_ship\_address\_zh, cus\_contact\_name, cust\_contact\_email, cus\_note, Users:usr\_id, cus\_status (active, inactive).
 * Suppliers:  sup\_id (unique), sup\_code, sup\_name\_en, sup\_name\_zh, sup\_type (service,products…), sup\_contact\_name, sup\_contact\_phone, sup\_contact\_email, sup\_contact\_messanger, sup\_fax, sup\_address\_en, sup\_address\_zh, sup\_factory\_adress\_zh, sup\_website, sup\_catalogue\_url, sup\_bank\_name, sup\_bank\_account, sup\_vat\_number, sup\_certificates, sup\_note, Users:usr\_id, sup\_status.
 * Locations: loc\_id (unique), loc\_name, loc\_address\_en, loc\_address\_zh, loc\_zone (storage, assembly, …), loc\_note, Users:usr\_id, loc\_status.
-* Items:  itm\_id (unique), itm\_sku, itm\_model, itm\_description, itm\_value, itm\_type (final, part, assembly), itm\_pic (BLOG), itm\_measure\_unit, itm\_note, Users:usr\_id (who created this item usr\_id), itm\_status (active, inactive).
+* Items:  itm\_id (unique), itm\_sku, itm\_model, itm\_description, itm\_value, itm\_last\_cost, itm\_avg\_cost, itm\_type (final, part, assembly), itm\_pic (BLOG), itm\_measure\_unit, itm\_note, Users:usr\_id (who created this item usr\_id), itm\_status (active, inactive).
 * Bill Of Material (BOM): bom\_id(unique), bom\_doc\_number, bom\_doc\_date, Items:itm\_id, bom\_note, Users:usr\_id, bom\_status.
 
   * BOM components: boc\_id, BOM:bom\_id, Items:itm\_id, boc\_qty, boc\_note. (ON DELETE BOM:bom\_id CASCADE)

@@ -231,6 +231,39 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	}
 }
 
+func TestItemsLastAndAverageCostRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	defer func() { _ = s.Close() }()
+
+	ctx := context.Background()
+
+	itemID, err := s.Insert(ctx, "items", map[string]any{
+		"itm_sku":          "COST-001",
+		"itm_model":        "Costed Item",
+		"itm_value":        25.75,
+		"itm_last_cost":    12.5,
+		"itm_avg_cost":     11.25,
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	if err != nil {
+		t.Fatalf("insert item: %v", err)
+	}
+
+	row, err := s.Get(ctx, "items", strconv.FormatInt(itemID, 10))
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+
+	if got := row["itm_last_cost"]; got != 12.5 {
+		t.Fatalf("itm_last_cost = %v, want 12.5", got)
+	}
+	if got := row["itm_avg_cost"]; got != 11.25 {
+		t.Fatalf("itm_avg_cost = %v, want 11.25", got)
+	}
+}
+
 func TestOpenMigratesLegacyBOMSchemaAndAddsPurchaseOrderTables(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "stockit.db")
@@ -410,6 +443,8 @@ func TestOpenMigratesLegacyNoteColumns(t *testing.T) {
 		{table: "users", column: "usr_note"},
 		{table: "customers", column: "cus_note"},
 		{table: "locations", column: "loc_note"},
+		{table: "items", column: "itm_last_cost"},
+		{table: "items", column: "itm_avg_cost"},
 		{table: "items", column: "itm_note"},
 		{table: "quotes", column: "qot_note"},
 		{table: "sales_orders", column: "sor_note"},

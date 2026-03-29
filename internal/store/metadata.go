@@ -210,6 +210,8 @@ func AllTables() map[string]TableDef {
 				{Column: "itm_model", Label: "model", Kind: KindText, Editable: true, List: true, Sortable: true},
 				{Column: "itm_description", Label: "description", Kind: KindTextarea, Editable: true, List: true},
 				{Column: "itm_value", Label: "value", Kind: KindReal, Editable: true, List: true, Sortable: true},
+				{Column: "itm_last_cost", Label: "last_cost", Kind: KindReal, Editable: true, List: true, Sortable: true},
+				{Column: "itm_avg_cost", Label: "avg_cost", Kind: KindReal, Editable: true, List: true, Sortable: true},
 				{Column: "itm_type", Label: "type", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: []string{"final", "part", "assembly"}},
 				{Column: "itm_pic", Label: "picture", Kind: KindBlob, Editable: true, List: true, Accept: "image/*"},
 				{Column: "itm_measure_unit", Label: "measure_unit", Kind: KindText, Editable: true, List: true, Sortable: true},

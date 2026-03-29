@@ -9,7 +9,7 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
   - `customers`
   - `suppliers`
   - `locations`
-  - `items`
+  - `items` with item value, last-cost, and average-cost fields
   - `boms`
   - `bom_components`
   - `quotes`
