@@ -1,6 +1,6 @@
 StockIt is a high-performance, self-contained (Asset Bundling) warehouse management app built in Go with UI Layer in HTMX + Tailwind CSS. SQLite persistence (pure Go `modernc.org/sqlite`).
 
-Initial technical specification is in the file StokIt_Specification.md.
+Initial technical specification is in the file StokIt_Specification.md. Update this spec as we move forward.
 
 This app code uses Go version 1.26 or newer. Use new Go features, do not care for compatibility with older Go versions.
 
