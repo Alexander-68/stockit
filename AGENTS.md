@@ -8,7 +8,10 @@ Extra tools available to agents on Windows and Linux platforms: Powershell 7.6, 
 
 Typical flow: review the task, if you find something unclear or inconsistent - ask me for confirmation before implementing code, implement code, update tests, run tests, document.
 Maintain README.md file updated with description and functionality for user.
+Maintain `openapi.yaml` for REST API changes.
+When it makes sense, keep REST API endpoints and MCP tools aligned: if a new API capability is added, add the matching MCP tool, and if a new MCP tool is added, add the matching REST API endpoint.
+Treat StockIt primarily as a backend data server for external smart tools, with the bundled web UI serving as a basic manipulation console. Prefer rich, validated API and MCP capabilities over UI-only functionality.
+Create and maintain tests for both REST API and MCP behavior when these surfaces change.
 
 Always use relative paths for `apply_patch` tool calls, never absolute paths.
-
 

@@ -4,6 +4,7 @@
 /data/*.db-shm
 /data/*.db-wal
 /data/*.db-journal
+/data/tls/*.pem
 
 # Generated review/test database outputs
 /testdata/review-db/*.db

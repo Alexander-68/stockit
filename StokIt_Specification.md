@@ -6,11 +6,20 @@ SQLite persistence (pure Go `modernc.org/sqlite`).
 
 Data is stored as UTF-8.
 
+Primary product direction:
+
+ - StockIt should provide a basic built-in web UI for direct human data manipulation.
+ - StockIt should primarily act as a validated backend data server through REST API and MCP so external smart tools can use it safely as their warehouse-data backend.
+
 Startup hardening for service runtimes: `TMPDIR` and `SQLITE\_TMPDIR` are forced to the resolved DB directory.
 
 Startup/runtime note:
 
  - on startup, the process logs the effective listen address, configured DB path, resolved DB path, working directory, and effective `TMPDIR` / `SQLITE_TMPDIR`
+
+ - when HTTPS is enabled and the configured certificate/key files do not both exist, the process generates a self-signed certificate and key on startup
+
+ - web UI, REST API, and MCP must all be reachable over HTTPS; MCP must also work over plain HTTP when the HTTP listener is enabled
 
  - interactive termination via `Ctrl-C` must gracefully stop the HTTP server and exit the process cleanly
 
@@ -30,6 +39,8 @@ Browser login/session notes:
 
 &#x20; - API clients may also present the same opaque session token via `Authorization: Bearer`
 
+&#x20; - API authentication must provide a JSON login endpoint that returns a bearer token for external clients and smart tools
+
 
 
 \- Web dashboard with embedded assets (no internet required), including bundled favicon files (`.ico` + PNG variants)
@@ -39,6 +50,20 @@ Browser login/session notes:
 \- Browser write requests are protected against cross-origin submission using Go's standard-library `net/http.CrossOriginProtection`
 
 All (REST) API endpoints require a valid session token (cookie or `Authorization: Bearer`), and a scope according to the role.
+
+REST API and MCP rules:
+
+ - REST API input must be validated
+
+ - MCP tool input must be validated
+
+ - MCP must expose application-level operations only, not raw database access
+
+ - when it makes sense, REST API and MCP capabilities should stay aligned: adding an API capability should add the matching MCP tool, and adding an MCP tool should add the matching REST API capability
+
+ - REST API must be documented in `openapi.yaml`
+
+ - MCP tools are self-discoverable through MCP, but they should still be documented in user/spec docs for authentication, transport, and REST/MCP mapping clarity
 
 Unsafe cross-origin browser requests to Web/API write endpoints are rejected with `403 Forbidden`.
 
@@ -53,6 +78,23 @@ Guests can access tables in read-only mode.
 Default draft credentials: `admin / admin`, user/user, guest/guest.
 
 Deleting the last admin user is blocked.
+
+MCP:
+
+ - transport: streamable HTTP endpoint at `/mcp`
+
+ - availability: accessible through both HTTP and HTTPS listeners
+
+ - authentication: required before access to data or tool execution; use the same StockIt session model as web/API
+
+ - current tool set:
+   - `stockit_list_tables`
+   - `stockit_describe_table`
+   - `stockit_list_records`
+   - `stockit_get_record`
+   - `stockit_create_record`
+   - `stockit_update_record`
+   - `stockit_delete_record`
 
 
 
@@ -108,3 +150,4 @@ Notes:
 * \_zh suffix means "in Chinese language".
 * In web UI column names are shown "human friendly" without leading prefix: address\_en instead of cus\_address\_en.
 * for status fields: Draft, Under Review, Active, Hold, Phase-Out, Absolete.
+* root `openapi.yaml` is the maintained REST API contract.

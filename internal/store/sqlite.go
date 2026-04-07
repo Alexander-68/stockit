@@ -275,8 +275,13 @@ func (s *Store) Update(ctx context.Context, tableName string, id string, values 
 		strings.Join(assignments, ", "),
 		quoteIdent(table.PrimaryKey),
 	)
-	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
 		return fmt.Errorf("update row: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err == nil && rowsAffected == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }
@@ -288,8 +293,13 @@ func (s *Store) Delete(ctx context.Context, tableName string, id string) error {
 	}
 
 	query := fmt.Sprintf(`DELETE FROM %s WHERE %s = ?`, quoteIdent(table.Name), quoteIdent(table.PrimaryKey))
-	if _, err := s.db.ExecContext(ctx, query, id); err != nil {
+	result, err := s.db.ExecContext(ctx, query, id)
+	if err != nil {
 		return fmt.Errorf("delete row: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err == nil && rowsAffected == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }
