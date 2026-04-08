@@ -140,6 +140,35 @@ Current MCP transport:
 
 MCP tools are self-discoverable through `tools/list`, but they are still documented here and in the specification because human-facing docs are needed for auth flow, REST/MCP mapping, and expected operator workflows.
 
+### Connecting Claude Code to the StockIt MCP server
+
+Claude Code (the CLI) can talk to the StockIt MCP endpoint over HTTP using a bearer token obtained from `/api/auth/login`.
+
+1. Obtain a bearer token (PowerShell):
+
+   ```powershell
+   Invoke-RestMethod -Uri http://127.0.0.1:8080/api/auth/login `
+     -Method Post -ContentType "application/json" `
+     -Body '{"login_name":"admin","password":"admin"}'
+   ```
+
+   The response contains a `token` field, for example `abc123...`.
+
+2. Register the MCP server in Claude Code, passing the token as an `Authorization` header:
+
+   ```powershell
+   claude mcp add --transport http stockit http://127.0.0.1:8080/mcp `
+     --header "Authorization: Bearer <token>"
+   ```
+
+3. Inside Claude Code, run `/mcp` to confirm the `stockit` server is connected. The StockIt tools become available as `mcp__stockit__stockit_list_tables`, `mcp__stockit__stockit_get_record`, etc. Write tools (`create`/`update`/`delete`) only appear if the authenticated role has writable tables.
+
+Notes:
+
+- Bearer tokens expire when the session idles out (`session_idle_timeout_seconds` in the login response). If `/mcp` later reports an auth failure, repeat step 1 and re-add the server with `claude mcp remove stockit` followed by step 2.
+- The same flow works against the HTTPS listener (`https://127.0.0.1:8443/mcp`); with a self-signed certificate, set `NODE_TLS_REJECT_UNAUTHORIZED=0` in the environment before launching Claude Code, or use the plain HTTP listener for local development.
+- Remote hosts such as claude.ai cannot reach `127.0.0.1` directly and require a public HTTPS tunnel (e.g. `cloudflared tunnel --url http://127.0.0.1:8080`).
+
 ## Test
 
 ```powershell
