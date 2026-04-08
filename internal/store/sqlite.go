@@ -593,9 +593,16 @@ func (s *Store) init(ctx context.Context) error {
 			poc_delivered_qty REAL,
 			poc_received_date TEXT,
 			poc_received_qty REAL,
+			poc_iqc_date TEXT,
+			poc_iqc_package TEXT,
+			poc_iqc_qty_inspected REAL,
+			poc_iqc_qty_accepted REAL,
+			poc_iqc_qty_rejected REAL,
+			poc_iqc_person INTEGER,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (por_id) REFERENCES purchase_orders (por_id) ON DELETE CASCADE,
-			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
+			FOREIGN KEY (poc_iqc_person) REFERENCES users (usr_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sales_orders (
 			sor_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -652,6 +659,12 @@ func (s *Store) init(ctx context.Context) error {
 		{table: "quotes", column: "qot_note", def: "TEXT"},
 		{table: "sales_orders", column: "sor_note", def: "TEXT"},
 		{table: "sales_order_components", column: "soc_note", def: "TEXT"},
+		{table: "po_components", column: "poc_iqc_date", def: "TEXT"},
+		{table: "po_components", column: "poc_iqc_package", def: "TEXT"},
+		{table: "po_components", column: "poc_iqc_qty_inspected", def: "REAL"},
+		{table: "po_components", column: "poc_iqc_qty_accepted", def: "REAL"},
+		{table: "po_components", column: "poc_iqc_qty_rejected", def: "REAL"},
+		{table: "po_components", column: "poc_iqc_person", def: "INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.def); err != nil {
 			return err
