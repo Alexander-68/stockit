@@ -97,7 +97,7 @@ func (s *Server) handleAPIAuthLogin(w http.ResponseWriter, r *http.Request) {
 		TokenType:              "Bearer",
 		User:                   session.LoginName,
 		Role:                   session.Role,
-		SessionIdleTimeoutSecs: int64((15 * time.Minute) / time.Second),
+		SessionIdleTimeoutSecs: int64(sessionIdleTimeout / time.Second),
 	})
 }
 

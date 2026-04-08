@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -15,23 +16,26 @@ import (
 	"time"
 )
 
-const selfSignedCertificateValidity = 365 * 24 * time.Hour
+const (
+	selfSignedCertificateValidity = 365 * 24 * time.Hour
+	certificateRenewalWindow      = 30 * 24 * time.Hour
+)
 
 func ensureTLSCertificate(certFile, keyFile string, hosts []string, now time.Time) error {
-	certExists := fileExists(certFile)
-	keyExists := fileExists(keyFile)
-	if certExists && keyExists {
+	if existingCertificateUsable(certFile, keyFile, now) {
 		return nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(certFile), 0o755); err != nil {
 		return fmt.Errorf("create certificate dir: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(keyFile), 0o755); err != nil {
-		return fmt.Errorf("create key dir: %w", err)
+	if keyDir := filepath.Dir(keyFile); keyDir != filepath.Dir(certFile) {
+		if err := os.MkdirAll(keyDir, 0o755); err != nil {
+			return fmt.Errorf("create key dir: %w", err)
+		}
 	}
 
-	privateKey, err := rsa.GenerateKey(nil, 2048)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return fmt.Errorf("generate rsa key: %w", err)
 	}
@@ -57,7 +61,7 @@ func ensureTLSCertificate(certFile, keyFile string, hosts []string, now time.Tim
 		template.DNSNames = append(template.DNSNames, host)
 	}
 
-	derCertificate, err := x509.CreateCertificate(nil, template, template, &privateKey.PublicKey, privateKey)
+	derCertificate, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
 	if err != nil {
 		return fmt.Errorf("create x509 certificate: %w", err)
 	}
@@ -124,4 +128,24 @@ func normalizedCertificateHosts(hosts []string) []string {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func existingCertificateUsable(certFile, keyFile string, now time.Time) bool {
+	if !fileExists(certFile) || !fileExists(keyFile) {
+		return false
+	}
+
+	pemBytes, err := os.ReadFile(certFile)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	return cert.NotAfter.Sub(now) > certificateRenewalWindow
 }

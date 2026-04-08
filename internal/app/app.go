@@ -163,6 +163,8 @@ const (
 	loginAttemptWindow  = time.Minute
 	loginAttemptLimit   = 10
 	loginLimiterMaxIdle = 10 * time.Minute
+	sessionIdleTimeout  = 15 * time.Minute
+	maxSessionsPerUser  = 5
 )
 
 func New(ctx context.Context, cfg Config) (*Server, error) {
@@ -193,7 +195,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	srv := &Server{
 		cfg:       cfg,
 		store:     dataStore,
-		sessions:  auth.NewManager(5, 15*time.Minute),
+		sessions:  auth.NewManager(maxSessionsPerUser, sessionIdleTimeout),
 		templates: templates,
 		cop:       http.NewCrossOriginProtection(),
 		limiters:  make(map[string]rateLimiter),
@@ -412,7 +414,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/tables/{table}", s.cop.Handler(s.withSession(s.handleAPITableCreate)))
 	mux.Handle("PUT /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableUpdate)))
 	mux.Handle("DELETE /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableDelete)))
-	mcpHandler := s.newMCPHandler()
+	mcpHandler := s.cop.Handler(s.newMCPHandler())
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("POST /mcp", mcpHandler)
 	mux.Handle("DELETE /mcp", mcpHandler)
@@ -975,6 +977,29 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 			}
 		}
 	}
+
+	// Enforce required-field validity for any field the caller actually
+	// touched (always on create, only when present on update). Mirrors the
+	// HTML form path so a JSON/MCP client cannot blank out a required field.
+	for _, field := range table.EditableFields() {
+		if !field.Required || isAutomaticUserField(table, field) {
+			continue
+		}
+		if field.Kind == store.KindBlob || field.Kind == store.KindPassword {
+			continue
+		}
+		_, present := payload[field.Column]
+		if !create && !present {
+			continue
+		}
+		stored, ok := values[field.Column]
+		if !ok {
+			return nil, fmt.Errorf("%s is required", field.Label)
+		}
+		if text, isString := stored.(string); isString && strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("%s is required", field.Label)
+		}
+	}
 	return values, nil
 }
 
@@ -1227,24 +1252,6 @@ func (s *Server) authorizeTable(w http.ResponseWriter, r *http.Request, role str
 	}
 	if !write && !table.CanRead(role) {
 		http.Error(w, "forbidden", http.StatusForbidden)
-		return store.TableDef{}, false
-	}
-	return table, true
-}
-
-func (s *Server) authorizeTableAPI(w http.ResponseWriter, r *http.Request, role string, write bool) (store.TableDef, bool) {
-	tableName := r.PathValue("table")
-	table, ok := s.store.Table(tableName)
-	if !ok {
-		s.writeJSON(w, http.StatusNotFound, apiResponse{Error: "table unavailable"})
-		return store.TableDef{}, false
-	}
-	if write && !table.CanWrite(role) {
-		s.writeJSON(w, http.StatusForbidden, apiResponse{Error: "forbidden"})
-		return store.TableDef{}, false
-	}
-	if !write && !table.CanRead(role) {
-		s.writeJSON(w, http.StatusForbidden, apiResponse{Error: "forbidden"})
 		return store.TableDef{}, false
 	}
 	return table, true

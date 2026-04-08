@@ -73,6 +73,7 @@ type apiTableListResponse struct {
 
 type apiTableRowResponse struct {
 	Table string         `json:"table"`
+	ID    string         `json:"id"`
 	Row   map[string]any `json:"row"`
 }
 
@@ -104,6 +105,15 @@ type tableListInput struct {
 	Desc   bool
 	Limit  int
 	Offset int
+}
+
+func (s *Server) roleHasAnyWritableTable(role string) bool {
+	for _, table := range s.store.TablesForRole(role) {
+		if table.CanWrite(role) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) listAPITables(principal Principal) []apiTableSummary {
@@ -209,6 +219,7 @@ func (s *Server) apiGetRecord(ctx context.Context, principal Principal, tableNam
 
 	return apiTableRowResponse{
 		Table: table.Name,
+		ID:    normalizedID,
 		Row:   row,
 	}, 0, nil
 }
@@ -227,16 +238,18 @@ func (s *Server) apiCreateRecord(ctx context.Context, principal Principal, table
 
 	id, err := s.store.Insert(ctx, table.Name, values)
 	if err != nil {
-		return apiTableRowResponse{}, 400, err
+		return apiTableRowResponse{}, classifyStoreError(err), err
 	}
 
-	row, err := s.store.Get(ctx, table.Name, strconv.FormatInt(id, 10))
+	insertedID := strconv.FormatInt(id, 10)
+	row, err := s.store.Get(ctx, table.Name, insertedID)
 	if err != nil {
 		return apiTableRowResponse{}, 500, err
 	}
 
 	return apiTableRowResponse{
 		Table: table.Name,
+		ID:    insertedID,
 		Row:   row,
 	}, 201, nil
 }
@@ -262,7 +275,7 @@ func (s *Server) apiUpdateRecord(ctx context.Context, principal Principal, table
 		if errors.Is(err, sql.ErrNoRows) {
 			return apiTableRowResponse{}, 404, fmt.Errorf("row not found")
 		}
-		return apiTableRowResponse{}, 400, err
+		return apiTableRowResponse{}, classifyStoreError(err), err
 	}
 
 	row, err := s.store.Get(ctx, table.Name, normalizedID)
@@ -275,6 +288,7 @@ func (s *Server) apiUpdateRecord(ctx context.Context, principal Principal, table
 
 	return apiTableRowResponse{
 		Table: table.Name,
+		ID:    normalizedID,
 		Row:   row,
 	}, 200, nil
 }
@@ -307,7 +321,7 @@ func (s *Server) apiDeleteRecord(ctx context.Context, principal Principal, table
 		if errors.Is(err, sql.ErrNoRows) {
 			return apiTableDeleteResponse{}, 404, fmt.Errorf("row not found")
 		}
-		return apiTableDeleteResponse{}, 400, err
+		return apiTableDeleteResponse{}, classifyStoreError(err), err
 	}
 
 	return apiTableDeleteResponse{
@@ -387,6 +401,27 @@ func parseBoundedInt(raw string, defaultValue, minValue, maxValue int, fieldName
 		return 0, fmt.Errorf("%s must be between %d and %d", fieldName, minValue, maxValue)
 	}
 	return parsed, nil
+}
+
+// classifyStoreError maps a store/sql error to an HTTP status code. Constraint
+// failures are caller-fixable (409/400); anything else is treated as a server
+// error so transient DB problems do not surface as 400 to clients.
+func classifyStoreError(err error) int {
+	if err == nil {
+		return 0
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "UNIQUE constraint failed"):
+		return 409
+	case strings.Contains(msg, "FOREIGN KEY constraint failed"):
+		return 409
+	case strings.Contains(msg, "CHECK constraint failed"),
+		strings.Contains(msg, "NOT NULL constraint failed"):
+		return 400
+	default:
+		return 500
+	}
 }
 
 func parseStrictBool(raw string, defaultValue bool) (bool, error) {

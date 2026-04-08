@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -62,7 +61,7 @@ func (s *Server) newMCPHandler() httpHandlerWithErr {
 		mcpserver.WithInstructions("Use StockIt tools for warehouse data access. Authenticate first, then prefer the listed tools over direct database assumptions. API and MCP operations are intentionally aligned."),
 		mcpserver.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
 			principal := principalFromContext(ctx)
-			if principal.Role != "guest" {
+			if s.roleHasAnyWritableTable(principal.Role) {
 				return tools
 			}
 
@@ -84,7 +83,7 @@ func (s *Server) newMCPHandler() httpHandlerWithErr {
 	streamable := mcpserver.NewStreamableHTTPServer(
 		mcpSrv,
 		mcpserver.WithStateful(true),
-		mcpserver.WithSessionIdleTTL(15*time.Minute),
+		mcpserver.WithSessionIdleTTL(sessionIdleTimeout),
 	)
 
 	return func(w http.ResponseWriter, r *http.Request) error {
@@ -141,7 +140,7 @@ func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {
 			mcp.WithString("table", mcp.Required(), mcp.Description("StockIt table name")),
 			mcp.WithString("sort", mcp.Description("Sortable column name")),
 			mcp.WithBoolean("desc", mcp.Description("Whether to sort descending")),
-			mcp.WithNumber("limit", mcp.Description("Page size from 1 to 200")),
+			mcp.WithNumber("limit", mcp.Description("Page size from 1 to 200; omit or pass 0 for the default of 30")),
 			mcp.WithNumber("offset", mcp.Description("Row offset starting at 0")),
 		),
 		s.handleMCPListRecords,
@@ -254,7 +253,7 @@ func (s *Server) handleMCPGetRecord(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return mcp.NewToolResultStructured(result, fmt.Sprintf("Fetched %s record %s.", result.Table, args.ID)), nil
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Fetched %s record %s.", result.Table, result.ID)), nil
 }
 
 func (s *Server) handleMCPCreateRecord(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -290,7 +289,7 @@ func (s *Server) handleMCPUpdateRecord(ctx context.Context, request mcp.CallTool
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return mcp.NewToolResultStructured(result, fmt.Sprintf("Updated %s record %s.", result.Table, args.ID)), nil
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Updated %s record %s.", result.Table, result.ID)), nil
 }
 
 func (s *Server) handleMCPDeleteRecord(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
