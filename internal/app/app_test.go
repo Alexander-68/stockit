@@ -1373,6 +1373,152 @@ func TestSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
+func TestManufacturingOrderSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	finalItem := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "MFO-FINAL-01",
+		"itm_model":        "MFO Final",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+
+	mfoA := createRecord(t, client, token, ts.URL, "manufacturing_orders", map[string]any{
+		"mfo_doc_number":  "MFO-ALPHA",
+		"mfo_doc_date":    "2026-04-01",
+		"mfo_target_date": "2026-04-15",
+	})
+	mfoB := createRecord(t, client, token, ts.URL, "manufacturing_orders", map[string]any{
+		"mfo_doc_number":  "MFO-BETA",
+		"mfo_doc_date":    "2026-04-02",
+		"mfo_target_date": "2026-04-20",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "mfo_components", map[string]any{
+		"mfo_id":        mfoA,
+		"itm_id":        finalItem,
+		"mfc_qty":       7,
+		"mfc_qc_date":   "2026-04-10",
+		"mfc_fqc_date":  "2026-04-12",
+		"mfc_pack_date": "2026-04-13",
+		"mfc_note":      "MFC-ALPHA-NOTE",
+	})
+	_ = createRecord(t, client, token, ts.URL, "mfo_components", map[string]any{
+		"mfo_id":   mfoB,
+		"itm_id":   finalItem,
+		"mfc_qty":  3,
+		"mfc_note": "MFC-BETA-NOTE",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="mfo_components"`) {
+		t.Fatalf("dashboard should not expose mfo_components in the top nav: %s", dashboardBody)
+	}
+
+	mfoPanelResp := get(t, client, ts.URL+"/tables/manufacturing_orders?limit=30")
+	mfoPanelBody := readBody(t, mfoPanelResp.Body)
+	if mfoPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("manufacturing_orders panel status = %d, want 200", mfoPanelResp.StatusCode)
+	}
+	if !strings.Contains(mfoPanelBody, `data-child-table="mfo_components"`) {
+		t.Fatalf("manufacturing_orders panel should advertise its subtable: %s", mfoPanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/mfo_components?limit=30&parent_table=manufacturing_orders&parent_id="+mfoA+"&parent_field=mfo_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("mfo_components child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "MFO-ALPHA") {
+		t.Fatalf("child panel missing manufacturing order context: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "MFC-ALPHA-NOTE") {
+		t.Fatalf("child panel missing alpha mfo component row: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "MFC-BETA-NOTE") {
+		t.Fatalf("child panel should exclude components from other manufacturing orders: %s", childPanelBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/mfo_components/form?id="+componentA+"&parent_table=manufacturing_orders&parent_id="+mfoA+"&parent_field=mfo_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("mfo_components child form status = %d, want 200", formResp.StatusCode)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="mfo_id" value="`+mfoA+`"`) {
+		t.Fatalf("child form should include hidden mfo_id: %s", formBody)
+	}
+	if !strings.Contains(formBody, `type="date" name="mfc_qc_date" value="2026-04-10"`) {
+		t.Fatalf("mfo component form should render qc_date as a date input: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/mfo_components/save", url.Values{
+		"parent_table":  {"manufacturing_orders"},
+		"parent_id":     {mfoA},
+		"parent_field":  {"mfo_id"},
+		"itm_id":        {finalItem},
+		"mfc_qty":       {"11"},
+		"mfc_qc_date":   {"2026-04-11"},
+		"mfc_fqc_date":  {"2026-04-13"},
+		"mfc_pack_date": {"2026-04-14"},
+		"mfc_note":      {"MFC-NEW"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("mfo_components child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/mfo_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("mfo_components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["mfc_note"]) != "MFC-NEW" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["mfo_id"]) != mfoA {
+			t.Fatalf("auto-linked mfo component attached to mfo_id=%v, want %s", row["mfo_id"], mfoA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked mfo component not found in API payload: %+v", payload.Rows)
+	}
+
+	// Verify MCP tool exposes the new tables.
+	initResp := doMCP(t, client, ts.URL+"/mcp", token, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "1"}},
+	})
+	sessionID := initResp.Header.Get("Mcp-Session-Id")
+	_ = initResp.Body.Close()
+	callResp := doMCP(t, client, ts.URL+"/mcp", token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": mcpToolListTables, "arguments": map[string]any{}},
+	})
+	body := readBody(t, callResp.Body)
+	if !strings.Contains(body, "manufacturing_orders") {
+		t.Fatalf("mcp list_tables missing manufacturing_orders: %s", body)
+	}
+}
+
 func TestDeleteParentFromSubtableContextEmitsRecordDeletedTrigger(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
@@ -1818,11 +1964,38 @@ func TestSeedReviewDataset(t *testing.T) {
 		}
 	}
 
+	mfoIDs := make([]string, 0, 3)
+	for _, payload := range []map[string]any{
+		{"mfo_doc_number": "RV-MFO-01", "mfo_doc_date": "2026-04-01", "mfo_target_date": "2026-04-15"},
+		{"mfo_doc_number": "RV-MFO-02", "mfo_doc_date": "2026-04-02", "mfo_target_date": "2026-04-18"},
+		{"mfo_doc_number": "RV-MFO-03", "mfo_doc_date": "2026-04-03", "mfo_target_date": "2026-04-22"},
+	} {
+		mfoIDs = append(mfoIDs, createRecord(t, client, token, ts.URL, "manufacturing_orders", payload))
+	}
+
+	for mfoIndex, mfoID := range mfoIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "mfo_components", map[string]any{
+				"mfo_id":        mfoID,
+				"itm_id":        finalItemIDs[mfoIndex],
+				"bom_id":        bomIDs[mfoIndex],
+				"mfc_qty":       float64(5 + mfoIndex + lineIndex),
+				"sor_id":        salesOrderIDs[mfoIndex],
+				"mfc_qc_date":   fmt.Sprintf("2026-04-%02d", 10+(mfoIndex*3)+lineIndex),
+				"mfc_fqc_date":  fmt.Sprintf("2026-04-%02d", 12+(mfoIndex*3)+lineIndex),
+				"mfc_pack_date": fmt.Sprintf("2026-04-%02d", 13+(mfoIndex*3)+lineIndex),
+				"mfc_note":      fmt.Sprintf("RV-MFC-%d%c", mfoIndex+1, 'A'+lineIndex),
+			})
+		}
+	}
+
 	for _, tc := range []struct {
 		table   string
 		check   string
 		minRows int
 	}{
+		{table: "manufacturing_orders", check: "RV-MFO-01", minRows: 3},
+		{table: "mfo_components", check: "RV-MFC-1A", minRows: 9},
 		{table: "users", check: "admin", minRows: 3},
 		{table: "customers", check: "Review Customer A", minRows: 3},
 		{table: "suppliers", check: "Review Supplier A", minRows: 3},
@@ -2355,6 +2528,10 @@ func idColumn(table string) string {
 		return "sor_id"
 	case "sales_order_components":
 		return "soc_id"
+	case "manufacturing_orders":
+		return "mfo_id"
+	case "mfo_components":
+		return "mfc_id"
 	default:
 		return "id"
 	}

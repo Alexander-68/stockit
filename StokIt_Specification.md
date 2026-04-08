@@ -141,6 +141,9 @@ Key Database Schema (SQLite):
 * Sales Order: sor\_id(unique), Customers:cus\_id, sor\_doc\_number, sor\_doc\_date, sor\_ship\_date, sor\_paid\_date, Users:usr\_id, sor\_status (confirmed, preparing, prepared, shipped, paid, complete, inactive), sor\_note.
 
   * Sales Order components: soc\_id, Sales Order:sor\_id, Items:itm\_id, sor\_qty, sor\_price, sor\_currency (USD, TWD, CNY, EUR), sor\_ship\_date, sor\_shipped\_date, sor\_shipped\_qty, sor\_shipped\_trackno, soc\_note. (ON DELETE Sales Order:sor\_id CASCADE)
+* Manufacturing Order (MFO): mfo\_id(unique), mfo\_doc\_number, mfo\_doc\_date, mfo\_target\_date.
+
+  * MFO components: mfc\_id, MFO:mfo\_id, Items:itm\_id, BOM:bom\_id, mfc\_qty, Sales Order:sor\_id, mfc\_qc\_date, mfc\_fqc\_date, mfc\_pack\_date, mfc\_note. (ON DELETE MFO:mfo\_id CASCADE)
 
 
 

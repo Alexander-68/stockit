@@ -260,6 +260,8 @@ components:
           - quote_components
           - sales_orders
           - sales_order_components
+          - manufacturing_orders
+          - mfo_components
     RecordID:
       name: id
       in: path

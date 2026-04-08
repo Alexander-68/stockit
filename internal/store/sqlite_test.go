@@ -229,6 +229,36 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	if len(salesOrderComponents.Rows) != 0 {
 		t.Fatalf("expected sales order components to cascade delete, got %+v", salesOrderComponents.Rows)
 	}
+
+	mfoID, err := s.Insert(ctx, "manufacturing_orders", map[string]any{
+		"mfo_doc_number":  "MFO-001",
+		"mfo_doc_date":    "2026-03-26",
+		"mfo_target_date": "2026-04-15",
+	})
+	if err != nil {
+		t.Fatalf("insert manufacturing order: %v", err)
+	}
+	if _, err := s.Insert(ctx, "mfo_components", map[string]any{
+		"mfo_id":        mfoID,
+		"itm_id":        finalItemID,
+		"mfc_qty":       3.0,
+		"mfc_qc_date":   "2026-04-10",
+		"mfc_fqc_date":  "2026-04-12",
+		"mfc_pack_date": "2026-04-13",
+		"mfc_note":      "Cascade mfo component",
+	}); err != nil {
+		t.Fatalf("insert mfo component: %v", err)
+	}
+	if err := s.Delete(ctx, "manufacturing_orders", strconv.FormatInt(mfoID, 10)); err != nil {
+		t.Fatalf("delete manufacturing order: %v", err)
+	}
+	mfoComponents, err := s.List(ctx, "mfo_components", ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list mfo components: %v", err)
+	}
+	if len(mfoComponents.Rows) != 0 {
+		t.Fatalf("expected mfo components to cascade delete, got %+v", mfoComponents.Rows)
+	}
 }
 
 func TestItemsLastAndAverageCostRoundTrip(t *testing.T) {
@@ -311,6 +341,12 @@ func TestOpenMigratesLegacyBOMSchemaAndAddsPurchaseOrderTables(t *testing.T) {
 	}
 	if _, ok := s.Table("sales_order_components"); !ok {
 		t.Fatalf("sales_order_components table metadata missing after open")
+	}
+	if _, ok := s.Table("manufacturing_orders"); !ok {
+		t.Fatalf("manufacturing_orders table metadata missing after open")
+	}
+	if _, ok := s.Table("mfo_components"); !ok {
+		t.Fatalf("mfo_components table metadata missing after open")
 	}
 
 	if _, err := s.Insert(ctx, "boms", map[string]any{

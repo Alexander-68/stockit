@@ -618,6 +618,30 @@ func (s *Store) init(ctx context.Context) error {
 			FOREIGN KEY (cus_id) REFERENCES customers (cus_id),
 			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS manufacturing_orders (
+			mfo_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			mfo_doc_number TEXT NOT NULL,
+			mfo_doc_date TEXT,
+			mfo_target_date TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS mfo_components (
+			mfc_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			mfo_id INTEGER NOT NULL,
+			itm_id INTEGER,
+			bom_id INTEGER,
+			mfc_qty REAL,
+			sor_id INTEGER,
+			mfc_qc_date TEXT,
+			mfc_fqc_date TEXT,
+			mfc_pack_date TEXT,
+			mfc_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (mfo_id) REFERENCES manufacturing_orders (mfo_id) ON DELETE CASCADE,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
+			FOREIGN KEY (bom_id) REFERENCES boms (bom_id),
+			FOREIGN KEY (sor_id) REFERENCES sales_orders (sor_id)
+		);`,
 		`CREATE TABLE IF NOT EXISTS sales_order_components (
 			soc_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			sor_id INTEGER NOT NULL,
