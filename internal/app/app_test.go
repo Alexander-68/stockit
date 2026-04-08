@@ -2545,3 +2545,506 @@ func TestDatabaseErrorSanitization(t *testing.T) {
 		t.Errorf("error message missing expected sanitized text: %s", errorMsg)
 	}
 }
+
+// initMCPSession performs the JSON-RPC initialize handshake and returns the
+// Mcp-Session-Id header that subsequent requests must include.
+func initMCPSession(t *testing.T, client *http.Client, baseURL, token string) string {
+	t.Helper()
+	resp := doMCP(t, client, baseURL+"/mcp", token, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"clientInfo":      map[string]any{"name": "stockit-test", "version": "1.0.0"},
+			"capabilities":    map[string]any{},
+		},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mcp initialize status = %d, want 200", resp.StatusCode)
+	}
+	sessionID := resp.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		t.Fatal("missing Mcp-Session-Id header")
+	}
+	return sessionID
+}
+
+// mcpCallTool issues a tools/call JSON-RPC request and returns the parsed result map.
+func mcpCallTool(t *testing.T, client *http.Client, baseURL, token, sessionID, name string, arguments map[string]any) map[string]any {
+	t.Helper()
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	resp := doMCP(t, client, baseURL+"/mcp", token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      name,
+			"arguments": arguments,
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		body := readBody(t, resp.Body)
+		t.Fatalf("tools/call %s status = %d, want 200, body=%s", name, resp.StatusCode, body)
+	}
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if rpcErr, ok := payload["error"]; ok && rpcErr != nil {
+		t.Fatalf("tools/call %s rpc error: %+v", name, rpcErr)
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/call %s missing result: %+v", name, payload)
+	}
+	return result
+}
+
+func mcpListTools(t *testing.T, client *http.Client, baseURL, token, sessionID string) []string {
+	t.Helper()
+	resp := doMCP(t, client, baseURL+"/mcp", token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "tools/list",
+		"params":  map[string]any{},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tools/list status = %d, want 200", resp.StatusCode)
+	}
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	return extractMCPToolNames(t, payload)
+}
+
+func TestMCPCRUDFlowExercisesEveryTool(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	sessionID := initMCPSession(t, client, ts.URL, loginResp.Token)
+
+	tools := mcpListTools(t, client, ts.URL, loginResp.Token, sessionID)
+	wantTools := []string{
+		mcpToolListTables, mcpToolDescribe, mcpToolListRecords,
+		mcpToolGetRecord, mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord,
+	}
+	for _, name := range wantTools {
+		if !slices.Contains(tools, name) {
+			t.Fatalf("admin tools/list missing %q: %v", name, tools)
+		}
+	}
+
+	// describe_table
+	describeResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolDescribe, map[string]any{
+		"table": "customers",
+	})
+	describeStruct, ok := describeResult["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("describe missing structuredContent: %+v", describeResult)
+	}
+	tableMeta, ok := describeStruct["table"].(map[string]any)
+	if !ok || tableMeta["name"] != "customers" {
+		t.Fatalf("describe unexpected payload: %+v", describeStruct)
+	}
+
+	// create_record
+	createResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolCreateRecord, map[string]any{
+		"table": "customers",
+		"values": map[string]any{
+			"cus_name_en": "MCP CRUD Customer",
+			"cus_status":  "Active",
+		},
+	})
+	createStruct := createResult["structuredContent"].(map[string]any)
+	createdID, ok := createStruct["id"].(string)
+	if !ok || createdID == "" {
+		t.Fatalf("create missing id: %+v", createStruct)
+	}
+
+	// get_record
+	getResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolGetRecord, map[string]any{
+		"table": "customers",
+		"id":    createdID,
+	})
+	getStruct := getResult["structuredContent"].(map[string]any)
+	if getStruct["id"] != createdID {
+		t.Fatalf("get id mismatch: %+v", getStruct)
+	}
+	row := getStruct["row"].(map[string]any)
+	if row["cus_name_en"] != "MCP CRUD Customer" {
+		t.Fatalf("get row unexpected: %+v", row)
+	}
+
+	// list_records — verify pagination args are accepted and the new row appears
+	listResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolListRecords, map[string]any{
+		"table":  "customers",
+		"sort":   "cus_name_en",
+		"desc":   false,
+		"limit":  float64(50),
+		"offset": float64(0),
+	})
+	listStruct := listResult["structuredContent"].(map[string]any)
+	rows, ok := listStruct["rows"].([]any)
+	if !ok || len(rows) == 0 {
+		t.Fatalf("list rows empty: %+v", listStruct)
+	}
+	foundCreated := false
+	for _, raw := range rows {
+		entry := raw.(map[string]any)
+		if fmt.Sprint(entry["cus_id"]) == createdID {
+			foundCreated = true
+			break
+		}
+	}
+	if !foundCreated {
+		t.Fatalf("list_records did not include created row %s: %+v", createdID, listStruct)
+	}
+
+	// update_record — change the name
+	updateResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolUpdateRecord, map[string]any{
+		"table": "customers",
+		"id":    createdID,
+		"values": map[string]any{
+			"cus_name_en": "Updated MCP Customer",
+		},
+	})
+	updateStruct := updateResult["structuredContent"].(map[string]any)
+	updatedRow := updateStruct["row"].(map[string]any)
+	if updatedRow["cus_name_en"] != "Updated MCP Customer" {
+		t.Fatalf("update did not persist: %+v", updatedRow)
+	}
+
+	// delete_record
+	deleteResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolDeleteRecord, map[string]any{
+		"table": "customers",
+		"id":    createdID,
+	})
+	deleteStruct := deleteResult["structuredContent"].(map[string]any)
+	if deleteStruct["deleted"] != true || deleteStruct["id"] != createdID {
+		t.Fatalf("delete unexpected payload: %+v", deleteStruct)
+	}
+
+	// get_record again — should now report a tool error (404 mapped to error result)
+	missingResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolGetRecord, map[string]any{
+		"table": "customers",
+		"id":    createdID,
+	})
+	if missingResult["isError"] != true {
+		t.Fatalf("get after delete should be a tool error: %+v", missingResult)
+	}
+}
+
+func TestMCPListRecordsValidatesLimit(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	sessionID := initMCPSession(t, client, ts.URL, loginResp.Token)
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "limit too large", args: map[string]any{"table": "customers", "limit": float64(9999)}},
+		{name: "negative offset", args: map[string]any{"table": "customers", "offset": float64(-1)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolListRecords, tc.args)
+			if result["isError"] != true {
+				t.Fatalf("expected tool error, got %+v", result)
+			}
+		})
+	}
+}
+
+func TestMCPGuestCannotInvokeWriteTools(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "guest", "guest")
+	sessionID := initMCPSession(t, client, ts.URL, loginResp.Token)
+
+	tools := mcpListTools(t, client, ts.URL, loginResp.Token, sessionID)
+	for _, forbidden := range []string{mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord} {
+		if slices.Contains(tools, forbidden) {
+			t.Fatalf("guest tools/list should not expose %q: %v", forbidden, tools)
+		}
+	}
+
+	// Even when invoked directly by name, the underlying API enforcement must reject the call.
+	result := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolCreateRecord, map[string]any{
+		"table": "customers",
+		"values": map[string]any{
+			"cus_name_en": "Should Not Persist",
+		},
+	})
+	if result["isError"] != true {
+		t.Fatalf("guest create_record should be a tool error: %+v", result)
+	}
+}
+
+func TestMCPRejectsCrossOriginCookieRequest(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// Log in via the HTML form so the session lives in the cookie jar.
+	htmlClient := newHTTPClient(t)
+	login(t, htmlClient, ts.URL, "admin", "admin")
+
+	// First request must succeed (same-origin) so we know auth/state are healthy.
+	sessionID := initMCPSession(t, htmlClient, ts.URL, "")
+	if sessionID == "" {
+		t.Fatal("expected initialize to succeed for same-origin cookie auth")
+	}
+
+	// Now the same client issues a cross-origin POST. The CrossOriginProtection
+	// wrapper added in routes() must reject it with 403.
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":99,"method":"tools/list","params":{}}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Mcp-Session-Id", sessionID)
+
+	resp, err := htmlClient.Do(req)
+	if err != nil {
+		t.Fatalf("cross-origin mcp request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin mcp status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAPIRejectsBlankRequiredField(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	token := loginResp.Token
+
+	// Create with explicit empty required field → 400.
+	createBlank := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/customers", token, map[string]any{
+		"cus_name_en": "   ",
+	})
+	if createBlank.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create blank required status = %d, want 400", createBlank.StatusCode)
+	}
+	var blankErr apiErrorResponse
+	decodeJSON(t, createBlank.Body, &blankErr)
+	if !strings.Contains(blankErr.Error, "required") {
+		t.Fatalf("expected required error, got %+v", blankErr)
+	}
+
+	// Create a real row.
+	createOK := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/customers", token, map[string]any{
+		"cus_name_en": "Required Field Customer",
+	})
+	if createOK.StatusCode != http.StatusCreated {
+		t.Fatalf("create ok status = %d, want 201", createOK.StatusCode)
+	}
+	var created apiTableRowResponse
+	decodeJSON(t, createOK.Body, &created)
+	if created.ID == "" {
+		t.Fatalf("created response missing id: %+v", created)
+	}
+
+	// Update that explicitly blanks the required field → 400.
+	updateBlank := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/customers/"+created.ID, token, map[string]any{
+		"cus_name_en": "",
+	})
+	if updateBlank.StatusCode != http.StatusBadRequest {
+		t.Fatalf("update blank required status = %d, want 400", updateBlank.StatusCode)
+	}
+
+	// Partial update that omits the required field → 200 (still partial-update friendly).
+	updateOK := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/customers/"+created.ID, token, map[string]any{
+		"cus_status": "Inactive",
+	})
+	if updateOK.StatusCode != http.StatusOK {
+		body := readBody(t, updateOK.Body)
+		t.Fatalf("partial update status = %d, want 200, body=%s", updateOK.StatusCode, body)
+	}
+}
+
+func TestAPIDuplicateUserReturns409(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	token := loginResp.Token
+
+	first := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/users", token, map[string]any{
+		"usr_login_name": "dup-test",
+		"usr_password":   "password",
+		"usr_role":       "user",
+	})
+	if first.StatusCode != http.StatusCreated {
+		body := readBody(t, first.Body)
+		t.Fatalf("first user create status = %d, want 201, body=%s", first.StatusCode, body)
+	}
+	_ = first.Body.Close()
+
+	dup := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/users", token, map[string]any{
+		"usr_login_name": "dup-test",
+		"usr_password":   "password",
+		"usr_role":       "user",
+	})
+	defer dup.Body.Close()
+	if dup.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate user status = %d, want 409", dup.StatusCode)
+	}
+}
+
+func TestClassifyStoreErrorMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "nil", err: nil, want: 0},
+		{name: "unique", err: fmt.Errorf("UNIQUE constraint failed: users.usr_login_name"), want: 409},
+		{name: "foreign", err: fmt.Errorf("FOREIGN KEY constraint failed"), want: 409},
+		{name: "check", err: fmt.Errorf("CHECK constraint failed: status"), want: 400},
+		{name: "not null", err: fmt.Errorf("NOT NULL constraint failed: cus_name_en"), want: 400},
+		{name: "other", err: fmt.Errorf("disk i/o error"), want: 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyStoreError(tc.err); got != tc.want {
+				t.Fatalf("classifyStoreError(%v) = %d, want %d", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAPIAuthLogoutInvalidatesToken(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	token := loginResp.Token
+
+	// Sanity-check that the token works before logout.
+	meBefore := getWithHeaders(t, client, ts.URL+"/api/me", map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if meBefore.StatusCode != http.StatusOK {
+		t.Fatalf("me before logout status = %d, want 200", meBefore.StatusCode)
+	}
+	_ = meBefore.Body.Close()
+
+	// Log out.
+	logoutResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/auth/logout", token, nil)
+	if logoutResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout status = %d, want 204", logoutResp.StatusCode)
+	}
+	clearedCookieFound := false
+	for _, cookie := range logoutResp.Cookies() {
+		if cookie.Name == sessionCookieName && cookie.MaxAge < 0 {
+			clearedCookieFound = true
+		}
+	}
+	_ = logoutResp.Body.Close()
+	if !clearedCookieFound {
+		t.Fatal("logout response did not clear the session cookie")
+	}
+
+	// Token must no longer work.
+	meAfter := getWithHeaders(t, client, ts.URL+"/api/me", map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	defer meAfter.Body.Close()
+	if meAfter.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("me after logout status = %d, want 401", meAfter.StatusCode)
+	}
+}
+
+func TestAPIPaginationAndSort(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	token := loginResp.Token
+
+	// Seed enough rows that pagination can be observed.
+	const seed = 35
+	for i := 0; i < seed; i++ {
+		resp := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/customers", token, map[string]any{
+			"cus_name_en": fmt.Sprintf("Pager %03d", i),
+			"cus_status":  "Active",
+		})
+		if resp.StatusCode != http.StatusCreated {
+			body := readBody(t, resp.Body)
+			t.Fatalf("seed row %d status = %d, want 201, body=%s", i, resp.StatusCode, body)
+		}
+		_ = resp.Body.Close()
+	}
+
+	// Request the first page sorted descending by name with a small limit.
+	page1 := getWithHeaders(t, client, ts.URL+"/api/tables/customers?limit=10&offset=0&sort=cus_name_en&desc=true", map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if page1.StatusCode != http.StatusOK {
+		t.Fatalf("page1 status = %d, want 200", page1.StatusCode)
+	}
+	var page1Body apiTableListResponse
+	decodeJSON(t, page1.Body, &page1Body)
+	if len(page1Body.Rows) != 10 {
+		t.Fatalf("page1 row count = %d, want 10", len(page1Body.Rows))
+	}
+	if !page1Body.HasMore {
+		t.Fatal("page1 should have more")
+	}
+	if fmt.Sprint(page1Body.Rows[0]["cus_name_en"]) != "Pager 034" {
+		t.Fatalf("page1 first row = %v, want \"Pager 034\"", page1Body.Rows[0]["cus_name_en"])
+	}
+
+	// Reject obviously bad limits.
+	for _, query := range []string{"limit=0", "limit=999", "offset=-1"} {
+		resp := getWithHeaders(t, client, ts.URL+"/api/tables/customers?"+query, map[string]string{
+			"Authorization": "Bearer " + token,
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d, want 400", query, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+}
+
+func TestAPISessionLimitReached(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	for i := 0; i < maxSessionsPerUser; i++ {
+		client := newServerHTTPClient(t, ts.server)
+		_ = apiLogin(t, client, ts.URL, "admin", "admin")
+	}
+
+	// One more login should hit the session limit and return 403 with the error envelope.
+	overflowClient := newServerHTTPClient(t, ts.server)
+	resp := doJSON(t, overflowClient, http.MethodPost, ts.URL+"/api/auth/login", nil, apiLoginRequest{
+		LoginName: "admin",
+		Password:  "admin",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("session-limit login status = %d, want 403", resp.StatusCode)
+	}
+	var body apiErrorResponse
+	decodeJSON(t, resp.Body, &body)
+	if !strings.Contains(body.Error, "session limit") {
+		t.Fatalf("unexpected error envelope: %+v", body)
+	}
+}
