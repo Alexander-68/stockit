@@ -1,0 +1,495 @@
+openapi: 3.1.0
+info:
+  title: StockIt REST API
+  version: 1.0.0
+  description: |
+    StockIt REST API for warehouse data access. The REST API and MCP tools are intentionally aligned:
+    table catalog/schema discovery, record list/get/create/update/delete, and shared session authentication.
+    MCP transport is documented in README.md and StokIt_Specification.md rather than OpenAPI.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default HTTP listener
+  - url: https://127.0.0.1:8443
+    description: Default HTTPS listener with startup-generated self-signed certificate
+tags:
+  - name: Auth
+  - name: Metadata
+  - name: Records
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Create a session and return a bearer token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated
+          headers:
+            Set-Cookie:
+              description: Session cookie for browser-style clients
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Session limit reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate the current session
+      responses:
+        '204':
+          description: Logged out
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: Get the current authenticated principal
+      responses:
+        '200':
+          description: Current session principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/tables:
+    get:
+      tags: [Metadata]
+      summary: List accessible top-level tables
+      responses:
+        '200':
+          description: Visible tables for the current role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableCatalogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/tables/{table}/schema:
+    get:
+      tags: [Metadata]
+      summary: Describe a table schema
+      parameters:
+        - $ref: '#/components/parameters/TableName'
+      responses:
+        '200':
+          description: Table schema
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableSchemaResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/tables/{table}:
+    get:
+      tags: [Records]
+      summary: List records from a table
+      parameters:
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Desc'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Table rows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableRowsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Records]
+      summary: Create a record in a table
+      parameters:
+        - $ref: '#/components/parameters/TableName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordWriteRequest'
+      responses:
+        '201':
+          description: Created record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableRowResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/tables/{table}/{id}:
+    get:
+      tags: [Records]
+      summary: Fetch one record by primary key
+      parameters:
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          description: Table row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableRowResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Records]
+      summary: Update one record by primary key
+      parameters:
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/RecordID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordWriteRequest'
+      responses:
+        '200':
+          description: Updated row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableRowResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Records]
+      summary: Delete one record by primary key
+      parameters:
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Deleting the last admin user is blocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque session token
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: stockit_session
+  parameters:
+    TableName:
+      name: table
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+          - users
+          - customers
+          - suppliers
+          - locations
+          - items
+          - boms
+          - bom_components
+          - purchase_orders
+          - po_components
+          - quotes
+          - quote_components
+          - sales_orders
+          - sales_order_components
+    RecordID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Table primary key value. Current built-in tables use integer identifiers.
+    Sort:
+      name: sort
+      in: query
+      schema:
+        type: string
+    Desc:
+      name: desc
+      in: query
+      schema:
+        type: boolean
+        default: false
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 30
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required or invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: The authenticated role cannot access this table or operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [login_name, password]
+      properties:
+        login_name:
+          type: string
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [token, token_type, user, role, session_idle_timeout_seconds]
+      properties:
+        token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer]
+        user:
+          type: string
+        role:
+          type: string
+          enum: [admin, user, guest]
+        session_idle_timeout_seconds:
+          type: integer
+    MeResponse:
+      type: object
+      additionalProperties: false
+      required: [user, role]
+      properties:
+        user:
+          type: string
+        role:
+          type: string
+          enum: [admin, user, guest]
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+    TableSummary:
+      type: object
+      additionalProperties: false
+      required: [name, label, primary_key, default_sort, can_write, is_subtable]
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        primary_key:
+          type: string
+        default_sort:
+          type: string
+        can_write:
+          type: boolean
+        is_subtable:
+          type: boolean
+        parent_table:
+          type: string
+        parent_field:
+          type: string
+    TableCatalogResponse:
+      type: object
+      additionalProperties: false
+      required: [tables]
+      properties:
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableSummary'
+    TableField:
+      type: object
+      additionalProperties: false
+      required: [column, label, kind, required, editable, list, sortable]
+      properties:
+        column:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+        required:
+          type: boolean
+        editable:
+          type: boolean
+        list:
+          type: boolean
+        sortable:
+          type: boolean
+        options:
+          type: array
+          items:
+            type: string
+        ref_table:
+          type: string
+        accept:
+          type: string
+        placeholder:
+          type: string
+    TableSchema:
+      type: object
+      additionalProperties: false
+      required:
+        [name, label, primary_key, title_column, default_sort, default_desc, can_write, import_enabled, is_subtable, fields]
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        primary_key:
+          type: string
+        title_column:
+          type: string
+        default_sort:
+          type: string
+        default_desc:
+          type: boolean
+        can_write:
+          type: boolean
+        import_enabled:
+          type: boolean
+        is_subtable:
+          type: boolean
+        parent_table:
+          type: string
+        parent_field:
+          type: string
+        parent_label:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableField'
+    TableSchemaResponse:
+      type: object
+      additionalProperties: false
+      required: [table]
+      properties:
+        table:
+          $ref: '#/components/schemas/TableSchema'
+    RecordWriteRequest:
+      type: object
+      description: |
+        Field names are table-specific. Unknown fields and values with invalid types are rejected.
+        Password fields accept plain text and are stored as Argon2id hashes.
+      additionalProperties: true
+    Record:
+      type: object
+      additionalProperties: true
+    TableRowsResponse:
+      type: object
+      additionalProperties: false
+      required: [table, rows, has_more]
+      properties:
+        table:
+          type: string
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/Record'
+        has_more:
+          type: boolean
+    TableRowResponse:
+      type: object
+      additionalProperties: false
+      required: [table, row]
+      properties:
+        table:
+          type: string
+        row:
+          $ref: '#/components/schemas/Record'

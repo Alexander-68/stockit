@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,245 @@ func TestInvalidLoginRejected(t *testing.T) {
 	}
 	if !strings.Contains(body, "Invalid login credentials.") {
 		t.Fatalf("unexpected login body: %s", body)
+	}
+}
+
+func TestAPIAuthLoginAndTableCatalog(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+	if loginResp.Token == "" {
+		t.Fatal("api login token is empty")
+	}
+	if loginResp.User != "admin" || loginResp.Role != "admin" {
+		t.Fatalf("unexpected api login payload: %+v", loginResp)
+	}
+
+	catalogResp := getWithHeaders(t, client, ts.URL+"/api/tables", map[string]string{
+		"Authorization": "Bearer " + loginResp.Token,
+	})
+	if catalogResp.StatusCode != http.StatusOK {
+		t.Fatalf("table catalog status = %d, want 200", catalogResp.StatusCode)
+	}
+
+	var catalog apiTableListEnvelope
+	decodeJSON(t, catalogResp.Body, &catalog)
+	if len(catalog.Tables) == 0 {
+		t.Fatal("expected non-empty table catalog")
+	}
+
+	foundCustomers := false
+	for _, table := range catalog.Tables {
+		if table.Name == "customers" {
+			foundCustomers = true
+			if !table.CanWrite {
+				t.Fatal("customers should be writable for admin")
+			}
+		}
+	}
+	if !foundCustomers {
+		t.Fatalf("customers table missing from catalog: %+v", catalog.Tables)
+	}
+
+	schemaResp := getWithHeaders(t, client, ts.URL+"/api/tables/customers/schema", map[string]string{
+		"Authorization": "Bearer " + loginResp.Token,
+	})
+	if schemaResp.StatusCode != http.StatusOK {
+		t.Fatalf("table schema status = %d, want 200", schemaResp.StatusCode)
+	}
+
+	var schema apiTableSchemaEnvelope
+	decodeJSON(t, schemaResp.Body, &schema)
+	if schema.Table.Name != "customers" || len(schema.Table.Fields) == 0 {
+		t.Fatalf("unexpected schema payload: %+v", schema)
+	}
+}
+
+func TestAPIRejectsUnknownFieldsAndInvalidIDs(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+
+	unknownFieldResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/customers", loginResp.Token, map[string]any{
+		"cus_name_en": "Bad Payload",
+		"unknown":     "value",
+	})
+	if unknownFieldResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field create status = %d, want 400", unknownFieldResp.StatusCode)
+	}
+	var createErr apiErrorResponse
+	decodeJSON(t, unknownFieldResp.Body, &createErr)
+	if !strings.Contains(createErr.Error, "unknown or read-only field") {
+		t.Fatalf("unexpected create error: %+v", createErr)
+	}
+
+	invalidIDResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/customers/not-an-int", loginResp.Token, nil)
+	if invalidIDResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid id status = %d, want 400", invalidIDResp.StatusCode)
+	}
+	var idErr apiErrorResponse
+	decodeJSON(t, invalidIDResp.Body, &idErr)
+	if !strings.Contains(idErr.Error, "invalid id") {
+		t.Fatalf("unexpected invalid id error: %+v", idErr)
+	}
+
+	wrongTypeResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/customers", loginResp.Token, map[string]any{
+		"cus_name_en": "Typed Wrong",
+		"cus_status":  true,
+	})
+	if wrongTypeResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong type create status = %d, want 400", wrongTypeResp.StatusCode)
+	}
+	var typeErr apiErrorResponse
+	decodeJSON(t, wrongTypeResp.Body, &typeErr)
+	if !strings.Contains(typeErr.Error, "must be a string") {
+		t.Fatalf("unexpected type error: %+v", typeErr)
+	}
+}
+
+func TestMCPRequiresAuthentication(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	resp := doMCP(t, client, ts.URL+"/mcp", "", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"clientInfo":      map[string]any{"name": "stockit-test", "version": "1.0.0"},
+			"capabilities":    map[string]any{},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated mcp status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestMCPWorksOverHTTPAndHTTPS(t *testing.T) {
+	for _, serverFactory := range []struct {
+		name string
+		new  func(*testing.T) *testServer
+	}{
+		{name: "http", new: newTestServer},
+		{name: "https", new: newTLSTestServer},
+	} {
+		t.Run(serverFactory.name, func(t *testing.T) {
+			ts := serverFactory.new(t)
+			defer ts.Close()
+
+			client := newServerHTTPClient(t, ts.server)
+			loginResp := apiLogin(t, client, ts.URL, "admin", "admin")
+
+			initializeResp := doMCP(t, client, ts.URL+"/mcp", loginResp.Token, "", map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  "initialize",
+				"params": map[string]any{
+					"protocolVersion": "2025-03-26",
+					"clientInfo":      map[string]any{"name": "stockit-test", "version": "1.0.0"},
+					"capabilities":    map[string]any{},
+				},
+			})
+			if initializeResp.StatusCode != http.StatusOK {
+				t.Fatalf("initialize status = %d, want 200", initializeResp.StatusCode)
+			}
+			sessionID := initializeResp.Header.Get("Mcp-Session-Id")
+			if sessionID == "" {
+				t.Fatal("missing MCP session id")
+			}
+
+			var initializePayload map[string]any
+			decodeJSON(t, initializeResp.Body, &initializePayload)
+			if initializePayload["result"] == nil {
+				t.Fatalf("missing initialize result: %+v", initializePayload)
+			}
+
+			listToolsResp := doMCP(t, client, ts.URL+"/mcp", loginResp.Token, sessionID, map[string]any{
+				"jsonrpc": "2.0",
+				"id":      2,
+				"method":  "tools/list",
+				"params":  map[string]any{},
+			})
+			if listToolsResp.StatusCode != http.StatusOK {
+				t.Fatalf("tools/list status = %d, want 200", listToolsResp.StatusCode)
+			}
+			var toolsPayload map[string]any
+			decodeJSON(t, listToolsResp.Body, &toolsPayload)
+
+			toolNames := extractMCPToolNames(t, toolsPayload)
+			if !slices.Contains(toolNames, mcpToolListTables) {
+				t.Fatalf("tools/list missing %q: %v", mcpToolListTables, toolNames)
+			}
+
+			callResp := doMCP(t, client, ts.URL+"/mcp", loginResp.Token, sessionID, map[string]any{
+				"jsonrpc": "2.0",
+				"id":      3,
+				"method":  "tools/call",
+				"params": map[string]any{
+					"name":      mcpToolListTables,
+					"arguments": map[string]any{},
+				},
+			})
+			if callResp.StatusCode != http.StatusOK {
+				t.Fatalf("tools/call status = %d, want 200", callResp.StatusCode)
+			}
+
+			var callPayload map[string]any
+			decodeJSON(t, callResp.Body, &callPayload)
+			structured, ok := callPayload["result"].(map[string]any)["structuredContent"].(map[string]any)
+			if !ok {
+				t.Fatalf("missing structured MCP result: %+v", callPayload)
+			}
+			tables, ok := structured["tables"].([]any)
+			if !ok || len(tables) == 0 {
+				t.Fatalf("unexpected MCP table payload: %+v", structured)
+			}
+		})
+	}
+}
+
+func TestHTTPSSetsStrictTransportAndSecureCookie(t *testing.T) {
+	ts := newTLSTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+
+	loginPageResp := get(t, client, ts.URL+"/login")
+	_ = loginPageResp.Body.Close()
+	if got := loginPageResp.Header.Get("Strict-Transport-Security"); got == "" {
+		t.Fatal("expected HSTS header on HTTPS response")
+	}
+
+	resp := doJSON(t, client, http.MethodPost, ts.URL+"/api/auth/login", nil, apiLoginRequest{
+		LoginName: "admin",
+		Password:  "admin",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("api login status = %d, want 200", resp.StatusCode)
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == sessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("session cookie missing")
+	}
+	if !sessionCookie.Secure {
+		t.Fatal("session cookie should be Secure over HTTPS")
 	}
 }
 
@@ -1687,6 +1927,29 @@ func newTestServer(t *testing.T) *testServer {
 	}
 }
 
+func newTLSTestServer(t *testing.T) *testServer {
+	t.Helper()
+
+	dbPath, cleanup := testDBPath(t)
+	t.Cleanup(cleanup)
+
+	server, err := New(context.Background(), Config{
+		Addr:   "127.0.0.1:0",
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("new app server: %v", err)
+	}
+
+	httpServer := httptest.NewTLSServer(server.Handler())
+	return &testServer{
+		URL:    httpServer.URL,
+		DBPath: dbPath,
+		server: httpServer,
+		app:    server,
+	}
+}
+
 func testDBPath(t *testing.T) (string, func()) {
 	t.Helper()
 
@@ -1776,6 +2039,25 @@ func newHTTPClient(t *testing.T) *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+func newServerHTTPClient(t *testing.T, srv *httptest.Server) *http.Client {
+	t.Helper()
+
+	if strings.HasPrefix(srv.URL, "https://") {
+		client := srv.Client()
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("new cookie jar: %v", err)
+		}
+		client.Jar = jar
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		return client
+	}
+
+	return newHTTPClient(t)
 }
 
 func login(t *testing.T, client *http.Client, baseURL, username, password string) {
@@ -1875,6 +2157,88 @@ func doAPI(t *testing.T, client *http.Client, method, target, token string, payl
 		t.Fatalf("do api request %s %s: %v", method, target, err)
 	}
 	return resp
+}
+
+func doJSON(t *testing.T, client *http.Client, method, target string, headers map[string]string, payload any) *http.Response {
+	t.Helper()
+
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal json payload: %v", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequest(method, target, body)
+	if err != nil {
+		t.Fatalf("new json request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("do json request %s: %v", target, err)
+	}
+	return resp
+}
+
+func doMCP(t *testing.T, client *http.Client, target, token, sessionID string, payload any) *http.Response {
+	t.Helper()
+
+	headers := map[string]string{}
+	if token != "" {
+		headers["Authorization"] = "Bearer " + token
+	}
+	if sessionID != "" {
+		headers["Mcp-Session-Id"] = sessionID
+	}
+	return doJSON(t, client, http.MethodPost, target, headers, payload)
+}
+
+func apiLogin(t *testing.T, client *http.Client, baseURL, loginName, password string) apiLoginResponse {
+	t.Helper()
+
+	resp := doJSON(t, client, http.MethodPost, baseURL+"/api/auth/login", nil, apiLoginRequest{
+		LoginName: loginName,
+		Password:  password,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("api login status = %d, want 200", resp.StatusCode)
+	}
+
+	var payload apiLoginResponse
+	decodeJSON(t, resp.Body, &payload)
+	return payload
+}
+
+func extractMCPToolNames(t *testing.T, payload map[string]any) []string {
+	t.Helper()
+
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing mcp result: %+v", payload)
+	}
+
+	rawTools, ok := result["tools"].([]any)
+	if !ok {
+		t.Fatalf("missing tools list: %+v", payload)
+	}
+
+	names := make([]string, 0, len(rawTools))
+	for _, rawTool := range rawTools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			t.Fatalf("invalid tool payload: %+v", rawTool)
+		}
+		name, _ := tool["name"].(string)
+		names = append(names, name)
+	}
+	return names
 }
 
 func postForm(t *testing.T, client *http.Client, target string, values url.Values) *http.Response {

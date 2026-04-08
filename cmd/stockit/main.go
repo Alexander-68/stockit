@@ -14,7 +14,10 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "HTTP listen address")
+	httpsAddr := flag.String("https-addr", "127.0.0.1:8443", "HTTPS listen address")
 	dbPath := flag.String("db", filepath.Join("data", "stockit.db"), "SQLite database path")
+	tlsCertPath := flag.String("tls-cert", filepath.Join("data", "tls", "cert.pem"), "TLS certificate path")
+	tlsKeyPath := flag.String("tls-key", filepath.Join("data", "tls", "key.pem"), "TLS private key path")
 	flag.Parse()
 
 	cwd, err := os.Getwd()
@@ -29,14 +32,26 @@ func main() {
 		log.Fatalf("configure sqlite temp dir: %v", err)
 	}
 
-	log.Printf("StockIt starting addr=%s db=%s resolved_db=%s cwd=%s", *addr, *dbPath, resolvedDBPath, cwd)
+	log.Printf(
+		"StockIt starting http_addr=%s https_addr=%s db=%s resolved_db=%s tls_cert=%s tls_key=%s cwd=%s",
+		*addr,
+		*httpsAddr,
+		*dbPath,
+		resolvedDBPath,
+		*tlsCertPath,
+		*tlsKeyPath,
+		cwd,
+	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	server, err := app.New(ctx, app.Config{
-		Addr:   *addr,
-		DBPath: *dbPath,
+		Addr:        *addr,
+		HTTPSAddr:   *httpsAddr,
+		DBPath:      *dbPath,
+		TLSCertPath: *tlsCertPath,
+		TLSKeyPath:  *tlsKeyPath,
 	})
 	if err != nil {
 		log.Fatalf("start app: %v", err)
@@ -48,8 +63,9 @@ func main() {
 	}()
 
 	log.Printf(
-		"StockIt running addr=%s db=%s tmpdir=%s sqlite_tmpdir=%s",
+		"StockIt running http_addr=%s https_addr=%s db=%s tmpdir=%s sqlite_tmpdir=%s",
 		*addr,
+		*httpsAddr,
 		resolvedDBPath,
 		os.Getenv("TMPDIR"),
 		os.Getenv("SQLITE_TMPDIR"),

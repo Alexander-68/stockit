@@ -28,8 +28,11 @@ type contextKey string
 const principalKey contextKey = "principal"
 
 type Config struct {
-	Addr   string
-	DBPath string
+	Addr        string
+	HTTPSAddr   string
+	DBPath      string
+	TLSCertPath string
+	TLSKeyPath  string
 }
 
 type Principal struct {
@@ -169,6 +172,12 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join("data", "stockit.db")
 	}
+	if cfg.TLSCertPath == "" {
+		cfg.TLSCertPath = filepath.Join("data", "tls", "cert.pem")
+	}
+	if cfg.TLSKeyPath == "" {
+		cfg.TLSKeyPath = filepath.Join("data", "tls", "key.pem")
+	}
 
 	dataStore, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -202,28 +211,89 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	httpServer := &http.Server{
-		Addr:              s.cfg.Addr,
-		Handler:           s.handler,
-		ReadHeaderTimeout: 5 * time.Second,
+	if strings.TrimSpace(s.cfg.HTTPSAddr) != "" {
+		if err := ensureTLSCertificate(
+			s.cfg.TLSCertPath,
+			s.cfg.TLSKeyPath,
+			tlsHosts(s.cfg.Addr, s.cfg.HTTPSAddr),
+			time.Now(),
+		); err != nil {
+			return err
+		}
 	}
+
+	type listenerSpec struct {
+		server *http.Server
+		run    func() error
+	}
+
+	specs := make([]listenerSpec, 0, 2)
+	if strings.TrimSpace(s.cfg.Addr) != "" {
+		httpServer := &http.Server{
+			Addr:              s.cfg.Addr,
+			Handler:           s.handler,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		specs = append(specs, listenerSpec{
+			server: httpServer,
+			run:    httpServer.ListenAndServe,
+		})
+	}
+	if strings.TrimSpace(s.cfg.HTTPSAddr) != "" {
+		httpsServer := &http.Server{
+			Addr:              s.cfg.HTTPSAddr,
+			Handler:           s.handler,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		specs = append(specs, listenerSpec{
+			server: httpsServer,
+			run: func() error {
+				return httpsServer.ListenAndServeTLS(s.cfg.TLSCertPath, s.cfg.TLSKeyPath)
+			},
+		})
+	}
+	if len(specs) == 0 {
+		return fmt.Errorf("at least one listen address must be configured")
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
-		<-ctx.Done()
+		<-runCtx.Done()
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		for _, spec := range specs {
+			_ = spec.server.Shutdown(shutdownCtx)
+		}
 	}()
 
-	err := httpServer.ListenAndServe()
-	<-shutdownDone
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	errCh := make(chan error, len(specs))
+	for _, spec := range specs {
+		spec := spec
+		go func() {
+			err := spec.run()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errCh <- err
+		}()
 	}
-	return err
+
+	var runErr error
+	for range specs {
+		if err := <-errCh; err != nil && runErr == nil {
+			runErr = err
+			cancel()
+		}
+	}
+
+	cancel()
+	<-shutdownDone
+	return runErr
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
@@ -332,12 +402,20 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("DELETE /tables/{table}/row/{id}", s.cop.Handler(s.withSession(s.handleTableDelete)))
 	mux.Handle("POST /tables/{table}/import", s.cop.Handler(s.withSession(s.handleTableImport)))
 
+	mux.Handle("POST /api/auth/login", s.cop.Handler(s.limitLogin(s.handleAPIAuthLogin)))
+	mux.Handle("POST /api/auth/logout", s.cop.Handler(s.withSession(s.handleAPIAuthLogout)))
 	mux.Handle("GET /api/me", s.withSession(s.handleAPIMe))
+	mux.Handle("GET /api/tables", s.withSession(s.handleAPITableCatalog))
+	mux.Handle("GET /api/tables/{table}/schema", s.withSession(s.handleAPITableSchema))
 	mux.Handle("GET /api/tables/{table}", s.withSession(s.handleAPITableList))
 	mux.Handle("GET /api/tables/{table}/{id}", s.withSession(s.handleAPITableGet))
 	mux.Handle("POST /api/tables/{table}", s.cop.Handler(s.withSession(s.handleAPITableCreate)))
 	mux.Handle("PUT /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableUpdate)))
 	mux.Handle("DELETE /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableDelete)))
+	mcpHandler := s.newMCPHandler()
+	mux.Handle("GET /mcp", mcpHandler)
+	mux.Handle("POST /mcp", mcpHandler)
+	mux.Handle("DELETE /mcp", mcpHandler)
 
 	return mux
 }
@@ -356,21 +434,11 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loginName := strings.TrimSpace(r.FormValue("login_name"))
-	password := r.FormValue("password")
-
-	user, err := s.store.AuthenticateUser(r.Context(), loginName)
-	if err != nil {
+	session, err := s.authenticateCredentials(r.Context(), r.FormValue("login_name"), r.FormValue("password"))
+	if err != nil && !errors.Is(err, auth.ErrSessionLimit) {
 		s.renderWithStatus(w, http.StatusUnauthorized, "login.gohtml", loginPageData{Error: "Invalid login credentials."})
 		return
 	}
-	ok, err := auth.VerifyPassword(user.PasswordHash, password)
-	if err != nil || !ok {
-		s.renderWithStatus(w, http.StatusUnauthorized, "login.gohtml", loginPageData{Error: "Invalid login credentials."})
-		return
-	}
-
-	session, err := s.sessions.Create(user.ID, user.LoginName, user.Role)
 	if errors.Is(err, auth.ErrSessionLimit) {
 		s.renderWithStatus(w, http.StatusForbidden, "login.gohtml", loginPageData{Error: "Session limit reached. Wait for an active session to expire or log out first."})
 		return
@@ -380,29 +448,14 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    session.Token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		Secure:   s.isHTTPS(r),
-	})
+	s.setSessionCookie(w, session.Token, s.isHTTPS(r))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	s.sessions.Delete(principal.Token)
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   -1,
-		SameSite: http.SameSiteStrictMode,
-		Secure:   s.isHTTPS(r),
-	})
+	s.clearSessionCookie(w, s.isHTTPS(r))
 
 	if r.Header.Get("HX-Request") != "" {
 		w.Header().Set("HX-Redirect", "/login")
@@ -737,58 +790,56 @@ func (s *Server) handleTableImport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	s.writeJSON(w, http.StatusOK, apiResponse{
+	s.writeJSON(w, http.StatusOK, apiMeResponse{
 		User: principal.LoginName,
 		Role: principal.Role,
 	})
 }
 
+func (s *Server) handleAPITableCatalog(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	s.writeJSON(w, http.StatusOK, apiTableListEnvelope{Tables: s.listAPITables(principal)})
+}
+
+func (s *Server) handleAPITableSchema(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	table, status, err := s.describeAPITable(principal, r.PathValue("table"))
+	if err != nil {
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, apiTableSchemaEnvelope{Table: table})
+}
+
 func (s *Server) handleAPITableList(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	table, ok := s.authorizeTableAPI(w, r, principal.Role, false)
-	if !ok {
-		return
-	}
-
-	result, err := s.store.List(r.Context(), table.Name, store.ListOptions{
-		Sort:   table.SortColumn(r.URL.Query().Get("sort")),
-		Desc:   parseBool(r.URL.Query().Get("desc")),
-		Limit:  viewportLimit(r),
-		Offset: intValue(r.URL.Query().Get("offset")),
-	})
+	input, err := parseListInput(
+		r.URL.Query().Get("limit"),
+		r.URL.Query().Get("offset"),
+		r.URL.Query().Get("sort"),
+		r.URL.Query().Get("desc"),
+	)
 	if err != nil {
-		s.writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
+		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: err.Error()})
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, apiResponse{
-		Table:   table.Name,
-		Rows:    result.Rows,
-		HasMore: result.HasMore,
-	})
+	result, status, err := s.apiListRecords(r.Context(), principal, r.PathValue("table"), input)
+	if err != nil {
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleAPITableGet(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	table, ok := s.authorizeTableAPI(w, r, principal.Role, false)
-	if !ok {
-		return
-	}
-
-	row, err := s.store.Get(r.Context(), table.Name, r.PathValue("id"))
+	result, status, err := s.apiGetRecord(r.Context(), principal, r.PathValue("table"), r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			s.writeJSON(w, http.StatusNotFound, apiResponse{Error: "row not found"})
-			return
-		}
-		s.writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
 		return
 	}
-
-	s.writeJSON(w, http.StatusOK, apiResponse{
-		Table: table.Name,
-		Row:   row,
-	})
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleAPITableCreate(w http.ResponseWriter, r *http.Request) {
@@ -801,65 +852,36 @@ func (s *Server) handleAPITableUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPITableWrite(w http.ResponseWriter, r *http.Request, create bool) {
 	principal := principalFromContext(r.Context())
-	table, ok := s.authorizeTableAPI(w, r, principal.Role, true)
-	if !ok {
-		return
-	}
 
 	var payload map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		s.writeJSON(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON body"})
+		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid JSON body"})
 		return
 	}
-
-	values, err := s.parseAPIValues(table, payload, create)
-	if err != nil {
-		s.writeJSON(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
-		return
-	}
-	s.applyAutomaticUserID(table, principal, create, values)
 
 	if create {
-		id, err := s.store.Insert(r.Context(), table.Name, values)
+		result, status, err := s.apiCreateRecord(r.Context(), principal, r.PathValue("table"), payload)
 		if err != nil {
-			s.writeJSON(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+			s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
 			return
 		}
-		row, _ := s.store.Get(r.Context(), table.Name, strconv.FormatInt(id, 10))
-		s.writeJSON(w, http.StatusCreated, apiResponse{Table: table.Name, Row: row})
+		s.writeJSON(w, status, result)
 		return
 	}
 
-	id := r.PathValue("id")
-	if err := s.store.Update(r.Context(), table.Name, id, values); err != nil {
-		s.writeJSON(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+	result, status, err := s.apiUpdateRecord(r.Context(), principal, r.PathValue("table"), r.PathValue("id"), payload)
+	if err != nil {
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
 		return
 	}
-	row, _ := s.store.Get(r.Context(), table.Name, id)
-	s.writeJSON(w, http.StatusOK, apiResponse{Table: table.Name, Row: row})
+	s.writeJSON(w, status, result)
 }
 
 func (s *Server) handleAPITableDelete(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	table, ok := s.authorizeTableAPI(w, r, principal.Role, true)
-	if !ok {
-		return
-	}
-
-	id := r.PathValue("id")
-	if table.Name == "users" {
-		record, err := s.store.Get(r.Context(), table.Name, id)
-		if err == nil && fmt.Sprint(record["usr_role"]) == "admin" {
-			admins, err := s.store.CountAdmins(r.Context())
-			if err == nil && admins <= 1 {
-				s.writeJSON(w, http.StatusConflict, apiResponse{Error: "deleting the last admin user is blocked"})
-				return
-			}
-		}
-	}
-
-	if err := s.store.Delete(r.Context(), table.Name, id); err != nil {
-		s.writeJSON(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+	_, status, err := s.apiDeleteRecord(r.Context(), principal, r.PathValue("table"), r.PathValue("id"))
+	if err != nil {
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -867,6 +889,17 @@ func (s *Server) handleAPITableDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, create bool) (map[string]any, error) {
 	values := make(map[string]any)
+	allowedFields := make(map[string]store.Field)
+	for _, field := range table.EditableFields() {
+		allowedFields[field.Column] = field
+	}
+
+	for key := range payload {
+		if _, ok := allowedFields[key]; !ok {
+			return nil, fmt.Errorf("unknown or read-only field %q", key)
+		}
+	}
+
 	for _, field := range table.EditableFields() {
 		if isAutomaticUserField(table, field) {
 			continue
@@ -883,6 +916,9 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 		case store.KindInteger, store.KindForeign:
 			switch typed := rawValue.(type) {
 			case float64:
+				if typed != float64(int64(typed)) {
+					return nil, fmt.Errorf("%s must be an integer", field.Column)
+				}
 				values[field.Column] = int64(typed)
 			case string:
 				parsed, err := store.ParseFieldValue(field, typed)
@@ -892,6 +928,8 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 				if parsed != nil {
 					values[field.Column] = parsed
 				}
+			default:
+				return nil, fmt.Errorf("%s must be an integer", field.Column)
 			}
 		case store.KindReal:
 			switch typed := rawValue.(type) {
@@ -905,9 +943,14 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 				if parsed != nil {
 					values[field.Column] = parsed
 				}
+			default:
+				return nil, fmt.Errorf("%s must be a number", field.Column)
 			}
 		case store.KindPassword:
-			password, _ := rawValue.(string)
+			password, ok := rawValue.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s must be a string", field.Column)
+			}
 			if create && strings.TrimSpace(password) == "" {
 				return nil, fmt.Errorf("%s is required", field.Label)
 			}
@@ -919,14 +962,16 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 				values[field.Column] = hash
 			}
 		default:
-			if text, ok := rawValue.(string); ok {
-				parsed, err := store.ParseFieldValue(field, text)
-				if err != nil {
-					return nil, fmt.Errorf("parse %s: %w", field.Column, err)
-				}
-				if parsed != nil {
-					values[field.Column] = parsed
-				}
+			text, ok := rawValue.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s must be a string", field.Column)
+			}
+			parsed, err := store.ParseFieldValue(field, text)
+			if err != nil {
+				return nil, fmt.Errorf("parse %s: %w", field.Column, err)
+			}
+			if parsed != nil {
+				values[field.Column] = parsed
 			}
 		}
 	}
@@ -1123,7 +1168,7 @@ func (s *Server) sendHTMXDeleteSuccess(w http.ResponseWriter, tableName, id, mes
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) writeJSON(w http.ResponseWriter, status int, payload apiResponse) {
+func (s *Server) writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
@@ -1131,18 +1176,13 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, payload apiRespons
 
 func (s *Server) withSession(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, ok := s.sessionFromRequest(r)
+		principal, ok := s.principalFromRequest(r)
 		if !ok {
 			s.handleUnauthenticated(w, r)
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), principalKey, Principal{
-			UserID:    session.UserID,
-			LoginName: session.LoginName,
-			Role:      session.Role,
-			Token:     session.Token,
-		})
+		ctx := context.WithValue(r.Context(), principalKey, principal)
 		next(w, r.WithContext(ctx))
 	})
 }
