@@ -287,6 +287,33 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	if len(invoiceComponents.Rows) != 0 {
 		t.Fatalf("expected invoice components to cascade delete, got %+v", invoiceComponents.Rows)
 	}
+
+	adjID, err := s.Insert(ctx, "adjustments", map[string]any{
+		"adj_doc_number": "ADJ-001",
+		"adj_doc_date":   "2026-04-08",
+		"adj_reason":     "cycle_count",
+	})
+	if err != nil {
+		t.Fatalf("insert adjustment: %v", err)
+	}
+	if _, err := s.Insert(ctx, "adjustment_components", map[string]any{
+		"adj_id":   adjID,
+		"itm_id":   finalItemID,
+		"adc_qty":  -2.0,
+		"adc_note": "Cascade adjustment component",
+	}); err != nil {
+		t.Fatalf("insert adjustment component: %v", err)
+	}
+	if err := s.Delete(ctx, "adjustments", strconv.FormatInt(adjID, 10)); err != nil {
+		t.Fatalf("delete adjustment: %v", err)
+	}
+	adjComponents, err := s.List(ctx, "adjustment_components", ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list adjustment components: %v", err)
+	}
+	if len(adjComponents.Rows) != 0 {
+		t.Fatalf("expected adjustment components to cascade delete, got %+v", adjComponents.Rows)
+	}
 }
 
 func TestItemsLastAndAverageCostRoundTrip(t *testing.T) {
@@ -381,6 +408,12 @@ func TestOpenMigratesLegacyBOMSchemaAndAddsPurchaseOrderTables(t *testing.T) {
 	}
 	if _, ok := s.Table("invoice_components"); !ok {
 		t.Fatalf("invoice_components table metadata missing after open")
+	}
+	if _, ok := s.Table("adjustments"); !ok {
+		t.Fatalf("adjustments table metadata missing after open")
+	}
+	if _, ok := s.Table("adjustment_components"); !ok {
+		t.Fatalf("adjustment_components table metadata missing after open")
 	}
 
 	if _, err := s.Insert(ctx, "boms", map[string]any{

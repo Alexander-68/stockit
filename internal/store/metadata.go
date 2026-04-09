@@ -47,7 +47,8 @@ var (
 		"complete",
 		"inactive",
 	}
-	currencyOptions = []string{"USD", "TWD", "CNY", "EUR"}
+	currencyOptions    = []string{"USD", "TWD", "CNY", "EUR"}
+	adjustmentReasons  = []string{"cycle_count", "damage", "loss", "found", "correction", "write_off", "other"}
 )
 
 type Field struct {
@@ -481,6 +482,56 @@ func AllTables() map[string]TableDef {
 				{Column: "ivc_qty", Label: "qty", Kind: KindReal, Editable: true, List: true, Sortable: true},
 				{Column: "ivc_price", Label: "price", Kind: KindReal, Editable: true, List: true, Sortable: true},
 				{Column: "ivc_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions},
+				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name:          "adjustments",
+			Label:         "Adjustment",
+			PrimaryKey:    "adj_id",
+			TitleColumn:   "adj_doc_number",
+			ReferenceCols: []string{"adj_id", "adj_doc_number"},
+			Subtable: &SubtableDef{
+				Table:       "adjustment_components",
+				ForeignKey:  "adj_id",
+				ParentLabel: "Selected Adjustment",
+			},
+			ReadRoles:     []string{"admin", "user", "guest"},
+			WriteRoles:    []string{"admin", "user"},
+			DefaultSort:   "adj_doc_number",
+			ImportEnabled: true,
+			Fields: []Field{
+				{Column: "adj_id", Label: "id", Kind: KindInteger, List: true, Sortable: true},
+				{Column: "adj_doc_number", Label: "doc_number", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true},
+				{Column: "adj_doc_date", Label: "doc_date", Kind: KindDate, Editable: true, List: true, Sortable: true},
+				{Column: "adj_reason", Label: "reason", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: adjustmentReasons},
+				{Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"},
+				{Column: "adj_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
+				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name:          "adjustment_components",
+			Label:         "Adjustment Components",
+			PrimaryKey:    "adc_id",
+			TitleColumn:   "adc_id",
+			ReferenceCols: []string{"adc_id", "adj_id", "itm_id"},
+			ParentTable:   "adjustments",
+			ParentField:   "adj_id",
+			ParentLabel:   "Selected Adjustment",
+			ReadRoles:     []string{"admin", "user", "guest"},
+			WriteRoles:    []string{"admin", "user"},
+			DefaultSort:   "adc_id",
+			ImportEnabled: true,
+			Fields: []Field{
+				{Column: "adc_id", Label: "id", Kind: KindInteger, List: true, Sortable: true},
+				{Column: "adj_id", Label: "adj_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "adjustments"},
+				{Column: "itm_id", Label: "item_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "items"},
+				{Column: "loc_id", Label: "location_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "locations"},
+				{Column: "adc_qty", Label: "qty_delta", Kind: KindReal, Editable: true, List: true, Sortable: true},
+				{Column: "adc_price", Label: "price", Kind: KindReal, Editable: true, List: true, Sortable: true},
+				{Column: "adc_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions},
+				{Column: "adc_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
 				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
 		},

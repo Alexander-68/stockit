@@ -264,6 +264,8 @@ components:
           - mfo_components
           - invoices
           - invoice_components
+          - adjustments
+          - adjustment_components
     RecordID:
       name: id
       in: path

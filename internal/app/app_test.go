@@ -1373,6 +1373,151 @@ func TestSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
+func TestAdjustmentSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	item := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "ADJ-ITM-01",
+		"itm_model":        "ADJ Item",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	loc := createRecord(t, client, token, ts.URL, "locations", map[string]any{
+		"loc_name":   "ADJ Bin",
+		"loc_zone":   "storage",
+		"loc_status": "Active",
+	})
+
+	adjA := createRecord(t, client, token, ts.URL, "adjustments", map[string]any{
+		"adj_doc_number": "ADJ-ALPHA",
+		"adj_doc_date":   "2026-04-08",
+		"adj_reason":     "cycle_count",
+		"adj_note":       "alpha",
+	})
+	adjB := createRecord(t, client, token, ts.URL, "adjustments", map[string]any{
+		"adj_doc_number": "ADJ-BETA",
+		"adj_doc_date":   "2026-04-09",
+		"adj_reason":     "damage",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "adjustment_components", map[string]any{
+		"adj_id":   adjA,
+		"itm_id":   item,
+		"loc_id":   loc,
+		"adc_qty":  5,
+		"adc_note": "ADC-ALPHA-NOTE",
+	})
+	_ = createRecord(t, client, token, ts.URL, "adjustment_components", map[string]any{
+		"adj_id":   adjB,
+		"itm_id":   item,
+		"loc_id":   loc,
+		"adc_qty":  -2,
+		"adc_note": "ADC-BETA-NOTE",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="adjustment_components"`) {
+		t.Fatalf("dashboard should not expose adjustment_components in the top nav: %s", dashboardBody)
+	}
+
+	adjPanelResp := get(t, client, ts.URL+"/tables/adjustments?limit=30")
+	adjPanelBody := readBody(t, adjPanelResp.Body)
+	if adjPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("adjustments panel status = %d, want 200", adjPanelResp.StatusCode)
+	}
+	if !strings.Contains(adjPanelBody, `data-child-table="adjustment_components"`) {
+		t.Fatalf("adjustments panel should advertise its subtable: %s", adjPanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/adjustment_components?limit=30&parent_table=adjustments&parent_id="+adjA+"&parent_field=adj_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("adjustment_components child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "ADJ-ALPHA") {
+		t.Fatalf("child panel missing adjustment context: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "ADC-ALPHA-NOTE") {
+		t.Fatalf("child panel missing alpha component row: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "ADC-BETA-NOTE") {
+		t.Fatalf("child panel should exclude components from other adjustments: %s", childPanelBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/adjustment_components/form?id="+componentA+"&parent_table=adjustments&parent_id="+adjA+"&parent_field=adj_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("adjustment_components child form status = %d, want 200", formResp.StatusCode)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="adj_id" value="`+adjA+`"`) {
+		t.Fatalf("child form should include hidden adj_id: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/adjustment_components/save", url.Values{
+		"parent_table": {"adjustments"},
+		"parent_id":    {adjA},
+		"parent_field": {"adj_id"},
+		"itm_id":       {item},
+		"loc_id":       {loc},
+		"adc_qty":      {"-3"},
+		"adc_note":     {"ADC-NEW"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("adjustment_components child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/adjustment_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("adjustment_components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["adc_note"]) != "ADC-NEW" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["adj_id"]) != adjA {
+			t.Fatalf("auto-linked adjustment component attached to adj_id=%v, want %s", row["adj_id"], adjA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked adjustment component not found in API payload: %+v", payload.Rows)
+	}
+
+	initResp := doMCP(t, client, ts.URL+"/mcp", token, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "1"}},
+	})
+	sessionID := initResp.Header.Get("Mcp-Session-Id")
+	_ = initResp.Body.Close()
+	callResp := doMCP(t, client, ts.URL+"/mcp", token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": mcpToolListTables, "arguments": map[string]any{}},
+	})
+	body := readBody(t, callResp.Body)
+	if !strings.Contains(body, "adjustments") {
+		t.Fatalf("mcp list_tables missing adjustments: %s", body)
+	}
+}
+
 func TestInvoiceSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
@@ -1772,12 +1917,13 @@ func TestSeedReviewDataset(t *testing.T) {
 		supplierIDs = append(supplierIDs, createRecord(t, client, token, ts.URL, "suppliers", payload))
 	}
 
+	locationIDs := make([]string, 0, 3)
 	for _, payload := range []map[string]any{
 		{"loc_name": "Main Warehouse", "loc_zone": "storage", "loc_status": "Active"},
 		{"loc_name": "Assembly Floor", "loc_zone": "assembly", "loc_status": "Active"},
 		{"loc_name": "Returns Cage", "loc_zone": "returns", "loc_status": "Hold"},
 	} {
-		createRecord(t, client, token, ts.URL, "locations", payload)
+		locationIDs = append(locationIDs, createRecord(t, client, token, ts.URL, "locations", payload))
 	}
 
 	itemIDs := make([]string, 0, 20)
@@ -2151,6 +2297,29 @@ func TestSeedReviewDataset(t *testing.T) {
 		}
 	}
 
+	adjIDs := make([]string, 0, 3)
+	adjReasons := []string{"cycle_count", "damage", "found"}
+	for adjIndex, reason := range adjReasons {
+		adjIDs = append(adjIDs, createRecord(t, client, token, ts.URL, "adjustments", map[string]any{
+			"adj_doc_number": fmt.Sprintf("RV-ADJ-%02d", adjIndex+1),
+			"adj_doc_date":   fmt.Sprintf("2026-04-%02d", 8+adjIndex),
+			"adj_reason":     reason,
+			"adj_note":       fmt.Sprintf("RV-ADJ-NOTE-%d", adjIndex+1),
+		}))
+	}
+
+	for adjIndex, adjID := range adjIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "adjustment_components", map[string]any{
+				"adj_id":   adjID,
+				"itm_id":   finalItemIDs[adjIndex],
+				"loc_id":   locationIDs[lineIndex%len(locationIDs)],
+				"adc_qty":  float64(lineIndex+1) - float64(adjIndex),
+				"adc_note": fmt.Sprintf("RV-ADC-%d%c", adjIndex+1, 'A'+lineIndex),
+			})
+		}
+	}
+
 	for _, tc := range []struct {
 		table   string
 		check   string
@@ -2160,6 +2329,8 @@ func TestSeedReviewDataset(t *testing.T) {
 		{table: "mfo_components", check: "RV-MFC-1A", minRows: 9},
 		{table: "invoices", check: "RV-INV-01", minRows: 3},
 		{table: "invoice_components", check: "USD", minRows: 9},
+		{table: "adjustments", check: "RV-ADJ-01", minRows: 3},
+		{table: "adjustment_components", check: "RV-ADC-1A", minRows: 9},
 		{table: "users", check: "admin", minRows: 3},
 		{table: "customers", check: "Review Customer A", minRows: 3},
 		{table: "suppliers", check: "Review Supplier A", minRows: 3},
@@ -2700,6 +2871,10 @@ func idColumn(table string) string {
 		return "inv_id"
 	case "invoice_components":
 		return "ivc_id"
+	case "adjustments":
+		return "adj_id"
+	case "adjustment_components":
+		return "adc_id"
 	default:
 		return "id"
 	}

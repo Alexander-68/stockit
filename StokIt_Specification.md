@@ -147,6 +147,9 @@ Key Database Schema (SQLite):
 * Invoice (INV): inv\_id(unique), inv\_doc\_number, inv\_doc\_date, Suppliers:sup\_id, Customers:cus\_id, Sales Order:sor\_id, inv\_shipped\_by, Users:usr\_id.
 
   * Invoice components: ivc\_id, Invoice:inv\_id, Items:itm\_id, ivc\_qty, ivc\_price, ivc\_currency (USD, TWD, CNY, EUR). (ON DELETE Invoice:inv\_id CASCADE)
+* Adjustment (ADJ): adj\_id(unique), adj\_doc\_number, adj\_doc\_date, adj\_reason (cycle\_count, damage, loss, found, correction, write\_off, other), Users:usr\_id, adj\_note. Document of intent for stock qty changes; future stock\_moves rows will be generated from these.
+
+  * Adjustment components: adc\_id, Adjustment:adj\_id, Items:itm\_id, Locations:loc\_id, adc\_qty (signed delta), adc\_price, adc\_currency (USD, TWD, CNY, EUR), adc\_note. (ON DELETE Adjustment:adj\_id CASCADE)
 
 
 
