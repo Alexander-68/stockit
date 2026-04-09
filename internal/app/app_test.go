@@ -1373,6 +1373,145 @@ func TestSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
+func TestInvoiceSubtableFlowUsesParentContext(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	finalItem := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "INV-FINAL-01",
+		"itm_model":        "INV Final",
+		"itm_type":         "final",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+
+	invA := createRecord(t, client, token, ts.URL, "invoices", map[string]any{
+		"inv_doc_number": "INV-ALPHA",
+		"inv_doc_date":   "2026-04-01",
+		"inv_shipped_by": "FedEx",
+	})
+	invB := createRecord(t, client, token, ts.URL, "invoices", map[string]any{
+		"inv_doc_number": "INV-BETA",
+		"inv_doc_date":   "2026-04-02",
+		"inv_shipped_by": "DHL",
+	})
+
+	componentA := createRecord(t, client, token, ts.URL, "invoice_components", map[string]any{
+		"inv_id":       invA,
+		"itm_id":       finalItem,
+		"ivc_qty":      7,
+		"ivc_price":    123.45,
+		"ivc_currency": "USD",
+	})
+	_ = createRecord(t, client, token, ts.URL, "invoice_components", map[string]any{
+		"inv_id":       invB,
+		"itm_id":       finalItem,
+		"ivc_qty":      3,
+		"ivc_price":    50,
+		"ivc_currency": "EUR",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if strings.Contains(dashboardBody, `data-table="invoice_components"`) {
+		t.Fatalf("dashboard should not expose invoice_components in the top nav: %s", dashboardBody)
+	}
+
+	invPanelResp := get(t, client, ts.URL+"/tables/invoices?limit=30")
+	invPanelBody := readBody(t, invPanelResp.Body)
+	if invPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("invoices panel status = %d, want 200", invPanelResp.StatusCode)
+	}
+	if !strings.Contains(invPanelBody, `data-child-table="invoice_components"`) {
+		t.Fatalf("invoices panel should advertise its subtable: %s", invPanelBody)
+	}
+
+	childPanelResp := get(t, client, ts.URL+"/tables/invoice_components?limit=30&parent_table=invoices&parent_id="+invA+"&parent_field=inv_id")
+	childPanelBody := readBody(t, childPanelResp.Body)
+	if childPanelResp.StatusCode != http.StatusOK {
+		t.Fatalf("invoice_components child panel status = %d, want 200", childPanelResp.StatusCode)
+	}
+	if !strings.Contains(childPanelBody, "INV-ALPHA") {
+		t.Fatalf("child panel missing invoice context: %s", childPanelBody)
+	}
+	if !strings.Contains(childPanelBody, "USD") {
+		t.Fatalf("child panel missing alpha invoice component row: %s", childPanelBody)
+	}
+	if strings.Contains(childPanelBody, "EUR") {
+		t.Fatalf("child panel should exclude components from other invoices: %s", childPanelBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/invoice_components/form?id="+componentA+"&parent_table=invoices&parent_id="+invA+"&parent_field=inv_id")
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("invoice_components child form status = %d, want 200", formResp.StatusCode)
+	}
+	if !strings.Contains(formBody, `type="hidden" name="inv_id" value="`+invA+`"`) {
+		t.Fatalf("child form should include hidden inv_id: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/invoice_components/save", url.Values{
+		"parent_table": {"invoices"},
+		"parent_id":    {invA},
+		"parent_field": {"inv_id"},
+		"itm_id":       {finalItem},
+		"ivc_qty":      {"11"},
+		"ivc_price":    {"99.5"},
+		"ivc_currency": {"TWD"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("invoice_components child save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	componentsResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/invoice_components?limit=30", token, nil)
+	if componentsResp.StatusCode != http.StatusOK {
+		t.Fatalf("invoice_components api status = %d, want 200", componentsResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, componentsResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["ivc_currency"]) != "TWD" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["inv_id"]) != invA {
+			t.Fatalf("auto-linked invoice component attached to inv_id=%v, want %s", row["inv_id"], invA)
+		}
+	}
+	if !found {
+		t.Fatalf("auto-linked invoice component not found in API payload: %+v", payload.Rows)
+	}
+
+	initResp := doMCP(t, client, ts.URL+"/mcp", token, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "1"}},
+	})
+	sessionID := initResp.Header.Get("Mcp-Session-Id")
+	_ = initResp.Body.Close()
+	callResp := doMCP(t, client, ts.URL+"/mcp", token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": mcpToolListTables, "arguments": map[string]any{}},
+	})
+	body := readBody(t, callResp.Body)
+	if !strings.Contains(body, "invoices") {
+		t.Fatalf("mcp list_tables missing invoices: %s", body)
+	}
+}
+
 func TestManufacturingOrderSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
@@ -1989,6 +2128,29 @@ func TestSeedReviewDataset(t *testing.T) {
 		}
 	}
 
+	invoiceIDs := make([]string, 0, 3)
+	for invIndex, payload := range []map[string]any{
+		{"inv_doc_number": "RV-INV-01", "inv_doc_date": "2026-04-05", "sup_id": supplierIDs[0], "cus_id": customerIDs[0], "sor_id": salesOrderIDs[0], "inv_shipped_by": "FedEx"},
+		{"inv_doc_number": "RV-INV-02", "inv_doc_date": "2026-04-06", "sup_id": supplierIDs[1], "cus_id": customerIDs[1], "sor_id": salesOrderIDs[1], "inv_shipped_by": "DHL"},
+		{"inv_doc_number": "RV-INV-03", "inv_doc_date": "2026-04-07", "sup_id": supplierIDs[2], "cus_id": customerIDs[2], "sor_id": salesOrderIDs[2], "inv_shipped_by": "UPS"},
+	} {
+		_ = invIndex
+		invoiceIDs = append(invoiceIDs, createRecord(t, client, token, ts.URL, "invoices", payload))
+	}
+
+	currencies := []string{"USD", "TWD", "CNY"}
+	for invIndex, invID := range invoiceIDs {
+		for lineIndex := range 3 {
+			createRecord(t, client, token, ts.URL, "invoice_components", map[string]any{
+				"inv_id":       invID,
+				"itm_id":       finalItemIDs[invIndex],
+				"ivc_qty":      float64(2 + invIndex + lineIndex),
+				"ivc_price":    float64(100 + invIndex*10 + lineIndex),
+				"ivc_currency": currencies[lineIndex%len(currencies)],
+			})
+		}
+	}
+
 	for _, tc := range []struct {
 		table   string
 		check   string
@@ -1996,6 +2158,8 @@ func TestSeedReviewDataset(t *testing.T) {
 	}{
 		{table: "manufacturing_orders", check: "RV-MFO-01", minRows: 3},
 		{table: "mfo_components", check: "RV-MFC-1A", minRows: 9},
+		{table: "invoices", check: "RV-INV-01", minRows: 3},
+		{table: "invoice_components", check: "USD", minRows: 9},
 		{table: "users", check: "admin", minRows: 3},
 		{table: "customers", check: "Review Customer A", minRows: 3},
 		{table: "suppliers", check: "Review Supplier A", minRows: 3},
@@ -2532,6 +2696,10 @@ func idColumn(table string) string {
 		return "mfo_id"
 	case "mfo_components":
 		return "mfc_id"
+	case "invoices":
+		return "inv_id"
+	case "invoice_components":
+		return "ivc_id"
 	default:
 		return "id"
 	}

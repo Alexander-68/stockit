@@ -144,6 +144,9 @@ Key Database Schema (SQLite):
 * Manufacturing Order (MFO): mfo\_id(unique), mfo\_doc\_number, mfo\_doc\_date, mfo\_target\_date.
 
   * MFO components: mfc\_id, MFO:mfo\_id, Items:itm\_id, BOM:bom\_id, mfc\_qty, Sales Order:sor\_id, mfc\_qc\_date, mfc\_fqc\_date, mfc\_pack\_date, mfc\_note. (ON DELETE MFO:mfo\_id CASCADE)
+* Invoice (INV): inv\_id(unique), inv\_doc\_number, inv\_doc\_date, Suppliers:sup\_id, Customers:cus\_id, Sales Order:sor\_id, inv\_shipped\_by, Users:usr\_id.
+
+  * Invoice components: ivc\_id, Invoice:inv\_id, Items:itm\_id, ivc\_qty, ivc\_price, ivc\_currency (USD, TWD, CNY, EUR). (ON DELETE Invoice:inv\_id CASCADE)
 
 
 

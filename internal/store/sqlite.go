@@ -658,6 +658,32 @@ func (s *Store) init(ctx context.Context) error {
 			FOREIGN KEY (sor_id) REFERENCES sales_orders (sor_id) ON DELETE CASCADE,
 			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS invoices (
+			inv_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			inv_doc_number TEXT NOT NULL,
+			inv_doc_date TEXT,
+			sup_id INTEGER,
+			cus_id INTEGER,
+			sor_id INTEGER,
+			inv_shipped_by TEXT,
+			usr_id INTEGER,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
+			FOREIGN KEY (cus_id) REFERENCES customers (cus_id),
+			FOREIGN KEY (sor_id) REFERENCES sales_orders (sor_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS invoice_components (
+			ivc_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			inv_id INTEGER NOT NULL,
+			itm_id INTEGER,
+			ivc_qty REAL,
+			ivc_price REAL,
+			ivc_currency TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (inv_id) REFERENCES invoices (inv_id) ON DELETE CASCADE,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
+		);`,
 	}
 
 	for _, statement := range statements {

@@ -262,6 +262,8 @@ components:
           - sales_order_components
           - manufacturing_orders
           - mfo_components
+          - invoices
+          - invoice_components
     RecordID:
       name: id
       in: path

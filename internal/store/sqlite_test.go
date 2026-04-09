@@ -259,6 +259,34 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	if len(mfoComponents.Rows) != 0 {
 		t.Fatalf("expected mfo components to cascade delete, got %+v", mfoComponents.Rows)
 	}
+
+	invID, err := s.Insert(ctx, "invoices", map[string]any{
+		"inv_doc_number": "INV-001",
+		"inv_doc_date":   "2026-04-05",
+		"inv_shipped_by": "FedEx",
+	})
+	if err != nil {
+		t.Fatalf("insert invoice: %v", err)
+	}
+	if _, err := s.Insert(ctx, "invoice_components", map[string]any{
+		"inv_id":       invID,
+		"itm_id":       finalItemID,
+		"ivc_qty":      4.0,
+		"ivc_price":    25.5,
+		"ivc_currency": "USD",
+	}); err != nil {
+		t.Fatalf("insert invoice component: %v", err)
+	}
+	if err := s.Delete(ctx, "invoices", strconv.FormatInt(invID, 10)); err != nil {
+		t.Fatalf("delete invoice: %v", err)
+	}
+	invoiceComponents, err := s.List(ctx, "invoice_components", ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list invoice components: %v", err)
+	}
+	if len(invoiceComponents.Rows) != 0 {
+		t.Fatalf("expected invoice components to cascade delete, got %+v", invoiceComponents.Rows)
+	}
 }
 
 func TestItemsLastAndAverageCostRoundTrip(t *testing.T) {
@@ -347,6 +375,12 @@ func TestOpenMigratesLegacyBOMSchemaAndAddsPurchaseOrderTables(t *testing.T) {
 	}
 	if _, ok := s.Table("mfo_components"); !ok {
 		t.Fatalf("mfo_components table metadata missing after open")
+	}
+	if _, ok := s.Table("invoices"); !ok {
+		t.Fatalf("invoices table metadata missing after open")
+	}
+	if _, ok := s.Table("invoice_components"); !ok {
+		t.Fatalf("invoice_components table metadata missing after open")
 	}
 
 	if _, err := s.Insert(ctx, "boms", map[string]any{
