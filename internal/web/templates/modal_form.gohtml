@@ -16,6 +16,9 @@
         {{ end }}
       </div>
       <div class="stockit-modal-actions">
+        {{ if .Error }}
+        <span class="stockit-modal-error">{{ .Error }}</span>
+        {{ end }}
         {{ if .CanDelete }}
         <button
           class="stockit-button stockit-button-danger"
@@ -37,10 +40,6 @@
   <input type="hidden" name="parent_table" value="{{ .Parent.TableName }}">
   <input type="hidden" name="parent_id" value="{{ .Parent.RowID }}">
   <input type="hidden" name="parent_field" value="{{ .Parent.Field }}">
-  {{ end }}
-
-  {{ if .Error }}
-  <div class="stockit-inline-message stockit-inline-message-error">{{ .Error }}</div>
   {{ end }}
 
   <div class="stockit-modal-fields grid md:grid-cols-2">

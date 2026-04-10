@@ -266,6 +266,7 @@ components:
           - invoice_components
           - adjustments
           - adjustment_components
+          - stock_moves
     RecordID:
       name: id
       in: path

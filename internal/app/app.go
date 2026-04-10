@@ -706,6 +706,15 @@ func (s *Server) handleTableSave(w http.ResponseWriter, r *http.Request) {
 		values[parentCtx.Field] = parentCtx.ParsedID
 	}
 
+	if table.Name == "stock_moves" {
+		src := values["stm_src_loc_id"]
+		dst := values["stm_dst_loc_id"]
+		if src != nil && dst != nil && fmt.Sprint(src) != "" && fmt.Sprint(dst) != "" && fmt.Sprint(src) == fmt.Sprint(dst) {
+			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, "Source and destination locations must be different.")
+			return
+		}
+	}
+
 	if rowID == "" {
 		if _, err := s.store.Insert(r.Context(), table.Name, values); err != nil {
 			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, s.sanitizeError(err))
@@ -1164,7 +1173,7 @@ func (s *Server) renderFormError(w http.ResponseWriter, r *http.Request, princip
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderWithStatus(w, http.StatusBadRequest, "modal_form.gohtml", data)
+	s.render(w, "modal_form.gohtml", data)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -314,6 +315,102 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	if len(adjComponents.Rows) != 0 {
 		t.Fatalf("expected adjustment components to cascade delete, got %+v", adjComponents.Rows)
 	}
+
+	srcLocID, err := s.Insert(ctx, "locations", map[string]any{
+		"loc_name":   "STM Source",
+		"loc_status": "Active",
+	})
+	if err != nil {
+		t.Fatalf("insert source location: %v", err)
+	}
+	dstLocID, err := s.Insert(ctx, "locations", map[string]any{
+		"loc_name":   "STM Destination",
+		"loc_status": "Active",
+	})
+	if err != nil {
+		t.Fatalf("insert destination location: %v", err)
+	}
+
+	stmPorID, err := s.Insert(ctx, "purchase_orders", map[string]any{
+		"por_doc_number": "STM-PO-01",
+		"por_doc_date":   "2026-04-09",
+		"por_status":     "received",
+	})
+	if err != nil {
+		t.Fatalf("insert PO for stock_moves: %v", err)
+	}
+	stmAdjID, err := s.Insert(ctx, "adjustments", map[string]any{
+		"adj_doc_number": "STM-ADJ-01",
+		"adj_doc_date":   "2026-04-09",
+		"adj_reason":     "correction",
+	})
+	if err != nil {
+		t.Fatalf("insert ADJ for stock_moves: %v", err)
+	}
+
+	for i, row := range []map[string]any{
+		{
+			"stm_doc_number": "STM-RECEIPT-01",
+			"stm_date":       "2026-04-09",
+			"por_id":         stmPorID,
+			"itm_id":         finalItemID,
+			"stm_dst_loc_id": dstLocID,
+			"stm_qty":        5.0,
+			"stm_note":       "receipt",
+		},
+		{
+			"stm_doc_number": "STM-ISSUE-01",
+			"stm_date":       "2026-04-09",
+			"itm_id":         finalItemID,
+			"stm_src_loc_id": srcLocID,
+			"stm_qty":        2.0,
+			"stm_note":       "issue",
+		},
+		{
+			"stm_doc_number": "STM-TRANSFER-01",
+			"stm_date":       "2026-04-09",
+			"adj_id":         stmAdjID,
+			"itm_id":         finalItemID,
+			"stm_src_loc_id": srcLocID,
+			"stm_dst_loc_id": dstLocID,
+			"stm_qty":        1.0,
+			"stm_note":       "transfer",
+		},
+	} {
+		if _, err := s.Insert(ctx, "stock_moves", row); err != nil {
+			t.Fatalf("insert stock_moves row %d: %v", i, err)
+		}
+	}
+
+	stockMoves, err := s.List(ctx, "stock_moves", ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stock_moves: %v", err)
+	}
+	if len(stockMoves.Rows) != 3 {
+		t.Fatalf("expected 3 stock_moves rows, got %+v", stockMoves.Rows)
+	}
+	notes := map[string]bool{}
+	for _, row := range stockMoves.Rows {
+		notes[fmt.Sprint(row["stm_note"])] = true
+	}
+	for _, want := range []string{"receipt", "issue", "transfer"} {
+		if !notes[want] {
+			t.Fatalf("stock_moves missing note %q: %+v", want, stockMoves.Rows)
+		}
+	}
+
+	// NO ACTION enforcement: deleting a referenced location must fail while
+	// a stock_moves row still points at it.
+	if err := s.Delete(ctx, "locations", strconv.FormatInt(srcLocID, 10)); err == nil {
+		t.Fatalf("expected FK error when deleting location referenced by stock_moves")
+	}
+	stillThere, err := s.List(ctx, "stock_moves", ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stock_moves after blocked delete: %v", err)
+	}
+	if len(stillThere.Rows) != 3 {
+		t.Fatalf("stock_moves rows should still exist after blocked delete, got %+v", stillThere.Rows)
+	}
 }
 
 func TestItemsLastAndAverageCostRoundTrip(t *testing.T) {
@@ -414,6 +511,9 @@ func TestOpenMigratesLegacyBOMSchemaAndAddsPurchaseOrderTables(t *testing.T) {
 	}
 	if _, ok := s.Table("adjustment_components"); !ok {
 		t.Fatalf("adjustment_components table metadata missing after open")
+	}
+	if _, ok := s.Table("stock_moves"); !ok {
+		t.Fatalf("stock_moves table metadata missing after open")
 	}
 
 	if _, err := s.Insert(ctx, "boms", map[string]any{

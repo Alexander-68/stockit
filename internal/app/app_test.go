@@ -1373,6 +1373,148 @@ func TestSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
+func TestStockMovesTopLevelFlow(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	item := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "STM-ITM-01",
+		"itm_model":        "STM Item",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	loc := createRecord(t, client, token, ts.URL, "locations", map[string]any{
+		"loc_name":   "STM Bin",
+		"loc_zone":   "storage",
+		"loc_status": "Active",
+	})
+	por := createRecord(t, client, token, ts.URL, "purchase_orders", map[string]any{
+		"por_doc_number": "STM-PO-01",
+		"por_doc_date":   "2026-04-08",
+		"por_status":     "received",
+	})
+
+	stmID := createRecord(t, client, token, ts.URL, "stock_moves", map[string]any{
+		"stm_doc_number": "STM-RECEIPT-01",
+		"stm_date":       "2026-04-09",
+		"por_id":         por,
+		"itm_id":         item,
+		"stm_dst_loc_id": loc,
+		"stm_qty":        7,
+		"stm_note":       "STM-ALPHA-NOTE",
+	})
+
+	dashboardResp := get(t, client, ts.URL+"/")
+	dashboardBody := readBody(t, dashboardResp.Body)
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if !strings.Contains(dashboardBody, `data-table="stock_moves"`) {
+		t.Fatalf("dashboard should expose stock_moves as a top-level table: %s", dashboardBody)
+	}
+
+	panelResp := get(t, client, ts.URL+"/tables/stock_moves?limit=30")
+	panelBody := readBody(t, panelResp.Body)
+	if panelResp.StatusCode != http.StatusOK {
+		t.Fatalf("stock_moves panel status = %d, want 200", panelResp.StatusCode)
+	}
+	if !strings.Contains(panelBody, "STM-RECEIPT-01") {
+		t.Fatalf("stock_moves panel missing STM-RECEIPT-01: %s", panelBody)
+	}
+	if !strings.Contains(panelBody, "STM-ALPHA-NOTE") {
+		t.Fatalf("stock_moves panel missing note: %s", panelBody)
+	}
+
+	formResp := get(t, client, ts.URL+"/tables/stock_moves/form?id="+stmID)
+	formBody := readBody(t, formResp.Body)
+	if formResp.StatusCode != http.StatusOK {
+		t.Fatalf("stock_moves form status = %d, want 200", formResp.StatusCode)
+	}
+	if !strings.Contains(formBody, `name="stm_doc_number"`) {
+		t.Fatalf("stock_moves form should render stm_doc_number input: %s", formBody)
+	}
+	if !strings.Contains(formBody, `name="por_id"`) {
+		t.Fatalf("stock_moves form should render por_id select: %s", formBody)
+	}
+
+	saveResp := postForm(t, client, ts.URL+"/tables/stock_moves/save", url.Values{
+		"id":             {stmID},
+		"stm_doc_number": {"STM-RECEIPT-01"},
+		"stm_date":       {"2026-04-09"},
+		"por_id":         {por},
+		"itm_id":         {item},
+		"stm_dst_loc_id": {loc},
+		"stm_qty":        {"7"},
+		"stm_note":       {"STM-UPDATED"},
+	})
+	if saveResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("stock_moves save status = %d, want 204", saveResp.StatusCode)
+	}
+	_ = saveResp.Body.Close()
+
+	apiResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/stock_moves?limit=30", token, nil)
+	if apiResp.StatusCode != http.StatusOK {
+		t.Fatalf("stock_moves api status = %d, want 200", apiResp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, apiResp.Body, &payload)
+
+	found := false
+	for _, row := range payload.Rows {
+		if fmt.Sprint(row["stm_note"]) != "STM-UPDATED" {
+			continue
+		}
+		found = true
+		if fmt.Sprint(row["por_id"]) != por {
+			t.Fatalf("stock_moves row por_id = %v, want %s", row["por_id"], por)
+		}
+	}
+	if !found {
+		t.Fatalf("updated stock_moves row not found in API payload: %+v", payload.Rows)
+	}
+
+	initResp := doMCP(t, client, ts.URL+"/mcp", token, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "1"}},
+	})
+	sessionID := initResp.Header.Get("Mcp-Session-Id")
+	_ = initResp.Body.Close()
+	callResp := doMCP(t, client, ts.URL+"/mcp", token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": mcpToolListTables, "arguments": map[string]any{}},
+	})
+	body := readBody(t, callResp.Body)
+	if !strings.Contains(body, "stock_moves") {
+		t.Fatalf("mcp list_tables missing stock_moves: %s", body)
+	}
+
+	// Verify src == dst location is rejected.
+	sameLocResp := postForm(t, client, ts.URL+"/tables/stock_moves/save", url.Values{
+		"stm_doc_number": {"STM-BAD"},
+		"stm_date":       {"2026-04-09"},
+		"itm_id":         {item},
+		"stm_src_loc_id": {loc},
+		"stm_dst_loc_id": {loc},
+		"stm_qty":        {"1"},
+	})
+	sameLocBody := readBody(t, sameLocResp.Body)
+	if sameLocResp.StatusCode == http.StatusNoContent {
+		t.Fatalf("stock_moves should reject same src and dst location")
+	}
+	if !strings.Contains(sameLocBody, "Source and destination locations must be different") {
+		t.Fatalf("expected validation error for same locations, got: %s", sameLocBody)
+	}
+}
+
 func TestAdjustmentSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
@@ -2320,6 +2462,35 @@ func TestSeedReviewDataset(t *testing.T) {
 		}
 	}
 
+	createRecord(t, client, token, ts.URL, "stock_moves", map[string]any{
+		"stm_doc_number": "RV-STM-01",
+		"stm_date":       "2026-04-10",
+		"por_id":         porIDs[0],
+		"itm_id":         finalItemIDs[0],
+		"stm_dst_loc_id": locationIDs[0],
+		"stm_qty":        5,
+		"stm_note":       "RV-STM-NOTE-RECEIPT",
+	})
+	createRecord(t, client, token, ts.URL, "stock_moves", map[string]any{
+		"stm_doc_number": "RV-STM-02",
+		"stm_date":       "2026-04-11",
+		"sor_id":         salesOrderIDs[0],
+		"itm_id":         finalItemIDs[0],
+		"stm_src_loc_id": locationIDs[0],
+		"stm_qty":        2,
+		"stm_note":       "RV-STM-NOTE-ISSUE",
+	})
+	createRecord(t, client, token, ts.URL, "stock_moves", map[string]any{
+		"stm_doc_number": "RV-STM-03",
+		"stm_date":       "2026-04-12",
+		"adj_id":         adjIDs[0],
+		"itm_id":         finalItemIDs[0],
+		"stm_src_loc_id": locationIDs[0],
+		"stm_dst_loc_id": locationIDs[1],
+		"stm_qty":        1,
+		"stm_note":       "RV-STM-NOTE-TRANSFER",
+	})
+
 	for _, tc := range []struct {
 		table   string
 		check   string
@@ -2331,6 +2502,7 @@ func TestSeedReviewDataset(t *testing.T) {
 		{table: "invoice_components", check: "USD", minRows: 9},
 		{table: "adjustments", check: "RV-ADJ-01", minRows: 3},
 		{table: "adjustment_components", check: "RV-ADC-1A", minRows: 9},
+		{table: "stock_moves", check: "RV-STM-01", minRows: 3},
 		{table: "users", check: "admin", minRows: 3},
 		{table: "customers", check: "Review Customer A", minRows: 3},
 		{table: "suppliers", check: "Review Supplier A", minRows: 3},
@@ -2875,6 +3047,8 @@ func idColumn(table string) string {
 		return "adj_id"
 	case "adjustment_components":
 		return "adc_id"
+	case "stock_moves":
+		return "stm_id"
 	default:
 		return "id"
 	}
@@ -3041,12 +3215,12 @@ func TestDatabaseErrorSanitization(t *testing.T) {
 	})
 	body := readBody(t, resp.Body)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("duplicate user status = %d, want 400", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate user status = %d, want 200 (form re-rendered with error)", resp.StatusCode)
 	}
 
-	// The error message should be in a specific div
-	errorMsgPattern := regexp.MustCompile(`<div class="stockit-inline-message stockit-inline-message-error">(.*?)</div>`)
+	// The error message should be in the modal action bar
+	errorMsgPattern := regexp.MustCompile(`<span class="stockit-modal-error">(.*?)</span>`)
 	matches := errorMsgPattern.FindStringSubmatch(body)
 	if len(matches) < 2 {
 		t.Fatalf("could not find error message in response: %s", body)

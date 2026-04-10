@@ -47,7 +47,7 @@ var (
 		"complete",
 		"inactive",
 	}
-	currencyOptions    = []string{"USD", "TWD", "CNY", "EUR"}
+	currencyOptions       = []string{"USD", "TWD", "CNY", "EUR"}
 	adjustmentReasons  = []string{"cycle_count", "damage", "loss", "found", "correction", "write_off", "other"}
 )
 
@@ -532,6 +532,33 @@ func AllTables() map[string]TableDef {
 				{Column: "adc_price", Label: "price", Kind: KindReal, Editable: true, List: true, Sortable: true},
 				{Column: "adc_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions},
 				{Column: "adc_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
+				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name:          "stock_moves",
+			Label:         "Stock Move",
+			PrimaryKey:    "stm_id",
+			TitleColumn:   "stm_doc_number",
+			ReferenceCols: []string{"stm_id", "stm_doc_number"},
+			ReadRoles:     []string{"admin", "user", "guest"},
+			WriteRoles:    []string{"admin", "user"},
+			DefaultSort:   "stm_doc_number",
+			ImportEnabled: true,
+			Fields: []Field{
+				{Column: "stm_id", Label: "id", Kind: KindInteger, List: true, Sortable: true},
+				{Column: "stm_doc_number", Label: "doc_number", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true},
+				{Column: "stm_date", Label: "date", Kind: KindDate, Editable: true, List: true, Sortable: true},
+				{Column: "itm_id", Label: "item_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "items"},
+				{Column: "stm_src_loc_id", Label: "src_location_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "locations"},
+				{Column: "stm_dst_loc_id", Label: "dst_location_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "locations"},
+				{Column: "stm_qty", Label: "qty", Kind: KindReal, Editable: true, List: true, Sortable: true},
+				{Column: "por_id", Label: "purchase_order", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "purchase_orders"},
+				{Column: "sor_id", Label: "sales_order", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "sales_orders"},
+				{Column: "mfo_id", Label: "manufacturing_order", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "manufacturing_orders"},
+				{Column: "adj_id", Label: "adjustment", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "adjustments"},
+				{Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"},
+				{Column: "stm_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
 				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
 		},

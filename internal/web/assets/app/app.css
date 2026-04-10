@@ -432,6 +432,19 @@ body {
   font-size: 0.64rem;
 }
 
+.stockit-modal-error {
+  display: flex;
+  align-items: center;
+  margin-right: auto;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--stockit-danger);
+  border: 1px solid var(--stockit-danger);
+  border-radius: 0.5rem;
+  background: rgba(239, 68, 68, 0.06);
+}
+
 .stockit-field-label {
   position: relative;
   display: block;

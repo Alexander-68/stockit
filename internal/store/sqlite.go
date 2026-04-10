@@ -708,6 +708,30 @@ func (s *Store) init(ctx context.Context) error {
 			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
 			FOREIGN KEY (loc_id) REFERENCES locations (loc_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS stock_moves (
+			stm_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			stm_doc_number TEXT NOT NULL,
+			stm_date TEXT,
+			itm_id INTEGER,
+			stm_src_loc_id INTEGER,
+			stm_dst_loc_id INTEGER,
+			stm_qty REAL,
+			por_id INTEGER,
+			sor_id INTEGER,
+			mfo_id INTEGER,
+			adj_id INTEGER,
+			usr_id INTEGER,
+			stm_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
+			FOREIGN KEY (stm_src_loc_id) REFERENCES locations (loc_id),
+			FOREIGN KEY (stm_dst_loc_id) REFERENCES locations (loc_id),
+			FOREIGN KEY (por_id) REFERENCES purchase_orders (por_id),
+			FOREIGN KEY (sor_id) REFERENCES sales_orders (sor_id),
+			FOREIGN KEY (mfo_id) REFERENCES manufacturing_orders (mfo_id),
+			FOREIGN KEY (adj_id) REFERENCES adjustments (adj_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
 	}
 
 	for _, statement := range statements {

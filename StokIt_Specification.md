@@ -150,6 +150,7 @@ Key Database Schema (SQLite):
 * Adjustment (ADJ): adj\_id(unique), adj\_doc\_number, adj\_doc\_date, adj\_reason (cycle\_count, damage, loss, found, correction, write\_off, other), Users:usr\_id, adj\_note. Document of intent for stock qty changes; future stock\_moves rows will be generated from these.
 
   * Adjustment components: adc\_id, Adjustment:adj\_id, Items:itm\_id, Locations:loc\_id, adc\_qty (signed delta), adc\_price, adc\_currency (USD, TWD, CNY, EUR), adc\_note. (ON DELETE Adjustment:adj\_id CASCADE)
+* Stock Move (STM): stm\_id(unique), stm\_doc\_number, stm\_date, Items:itm\_id, Locations:stm\_src\_loc\_id, Locations:stm\_dst\_loc\_id, stm\_qty (positive), PurchaseOrders:por\_id, SalesOrders:sor\_id, ManufacturingOrders:mfo\_id, Adjustments:adj\_id, Users:usr\_id, stm\_note. Ledger of physical movements; `stm_src_loc_id` NULL = receipt, `stm_dst_loc_id` NULL = issue, both set = transfer. Source and destination location must differ. Each FK references the originating document (at most one populated per row). Generated from finalized source documents by future logic; editable by hand for now.
 
 
 
