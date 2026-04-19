@@ -2068,7 +2068,7 @@ func TestSeedReviewDataset(t *testing.T) {
 		locationIDs = append(locationIDs, createRecord(t, client, token, ts.URL, "locations", payload))
 	}
 
-	itemIDs := make([]string, 0, 20)
+	itemIDs := make([]string, 0, 15)
 	for _, payload := range []map[string]any{
 		{
 			"itm_sku":          "RV-FG-01",
@@ -2203,69 +2203,6 @@ func TestSeedReviewDataset(t *testing.T) {
 			"itm_type":         "assembly",
 			"itm_measure_unit": "set",
 			"itm_value":        47.75,
-			"itm_status":       "Active",
-		},
-		{
-			"itm_sku":          "RV-AS-04",
-			"itm_model":        "Review Assembly Delta",
-			"itm_description":  "Assembly fixture delta",
-			"itm_type":         "assembly",
-			"itm_measure_unit": "set",
-			"itm_value":        49.9,
-			"itm_status":       "Hold",
-		},
-		{
-			"itm_sku":          "RV-FG-04",
-			"itm_model":        "Review Final D",
-			"itm_description":  "Finished good for review D",
-			"itm_type":         "final",
-			"itm_measure_unit": "pcs",
-			"itm_value":        165.0,
-			"itm_status":       "Active",
-		},
-		{
-			"itm_sku":          "RV-FG-05",
-			"itm_model":        "Review Final E",
-			"itm_description":  "Finished good for review E",
-			"itm_type":         "final",
-			"itm_measure_unit": "pcs",
-			"itm_value":        172.5,
-			"itm_status":       "Under Review",
-		},
-		{
-			"itm_sku":          "RV-FG-06",
-			"itm_model":        "Review Final F",
-			"itm_description":  "Finished good for review F",
-			"itm_type":         "final",
-			"itm_measure_unit": "pcs",
-			"itm_value":        181.2,
-			"itm_status":       "Active",
-		},
-		{
-			"itm_sku":          "RV-PT-10",
-			"itm_model":        "Review Part Kappa",
-			"itm_description":  "Switch housing for review",
-			"itm_type":         "part",
-			"itm_measure_unit": "pcs",
-			"itm_value":        5.95,
-			"itm_status":       "Active",
-		},
-		{
-			"itm_sku":          "RV-PT-11",
-			"itm_model":        "Review Part Lambda",
-			"itm_description":  "Ribbon cable for review",
-			"itm_type":         "part",
-			"itm_measure_unit": "pcs",
-			"itm_value":        3.95,
-			"itm_status":       "Active",
-		},
-		{
-			"itm_sku":          "RV-PT-12",
-			"itm_model":        "Review Part Mu",
-			"itm_description":  "Connector block for review",
-			"itm_type":         "part",
-			"itm_measure_unit": "pcs",
-			"itm_value":        6.15,
 			"itm_status":       "Active",
 		},
 	} {
@@ -2507,7 +2444,7 @@ func TestSeedReviewDataset(t *testing.T) {
 		{table: "customers", check: "Review Customer A", minRows: 3},
 		{table: "suppliers", check: "Review Supplier A", minRows: 3},
 		{table: "locations", check: "Main Warehouse", minRows: 3},
-		{table: "items", check: "RV-FG-01", minRows: 20},
+		{table: "items", check: "RV-FG-01", minRows: 15},
 		{table: "boms", check: "RV-BOM-01", minRows: 3},
 		{table: "bom_components", check: "Review BOM component 1A", minRows: 9},
 		{table: "purchase_orders", check: "RV-PO-01", minRows: 3},
@@ -3741,4 +3678,277 @@ func TestAPISessionLimitReached(t *testing.T) {
 	if !strings.Contains(body.Error, "session limit") {
 		t.Fatalf("unexpected error envelope: %+v", body)
 	}
+}
+
+func TestStockMovesSrcDstValidationOnAPIAndMCP(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	item := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":          "STM-PARITY-ITM",
+		"itm_type":         "part",
+		"itm_measure_unit": "pcs",
+		"itm_status":       "Active",
+	})
+	loc := createRecord(t, client, token, ts.URL, "locations", map[string]any{
+		"loc_name":   "STM-PARITY-LOC",
+		"loc_zone":   "storage",
+		"loc_status": "Active",
+	})
+
+	// REST: same src and dst must be rejected with 400.
+	badPayload := map[string]any{
+		"stm_doc_number": "STM-PARITY-REST",
+		"stm_date":       "2026-04-10",
+		"itm_id":         item,
+		"stm_src_loc_id": loc,
+		"stm_dst_loc_id": loc,
+		"stm_qty":        1,
+	}
+	apiResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/stock_moves", token, badPayload)
+	if apiResp.StatusCode != http.StatusBadRequest {
+		body := readBody(t, apiResp.Body)
+		t.Fatalf("rest stock_moves same-loc status = %d, want 400, body=%s", apiResp.StatusCode, body)
+	}
+	var apiErr apiErrorResponse
+	decodeJSON(t, apiResp.Body, &apiErr)
+	if !strings.Contains(apiErr.Error, "Source and destination locations must be different") {
+		t.Fatalf("rest error missing validator message: %+v", apiErr)
+	}
+
+	// REST update path must enforce the same check when both fields are present.
+	goodID := createRecord(t, client, token, ts.URL, "stock_moves", map[string]any{
+		"stm_doc_number": "STM-PARITY-UPDATE",
+		"stm_date":       "2026-04-11",
+		"itm_id":         item,
+		"stm_dst_loc_id": loc,
+		"stm_qty":        2,
+	})
+	updateResp := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/stock_moves/"+goodID, token, map[string]any{
+		"stm_src_loc_id": loc,
+		"stm_dst_loc_id": loc,
+	})
+	if updateResp.StatusCode != http.StatusBadRequest {
+		body := readBody(t, updateResp.Body)
+		t.Fatalf("rest stock_moves update same-loc status = %d, want 400, body=%s", updateResp.StatusCode, body)
+	}
+	_ = updateResp.Body.Close()
+
+	// MCP: same-location create must return a tool error.
+	mcpClient := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, mcpClient, ts.URL, "admin", "admin")
+	sessionID := initMCPSession(t, mcpClient, ts.URL, loginResp.Token)
+	createResult := mcpCallTool(t, mcpClient, ts.URL, loginResp.Token, sessionID, mcpToolCreateRecord, map[string]any{
+		"table": "stock_moves",
+		"values": map[string]any{
+			"stm_doc_number": "STM-PARITY-MCP",
+			"stm_date":       "2026-04-12",
+			"itm_id":         item,
+			"stm_src_loc_id": loc,
+			"stm_dst_loc_id": loc,
+			"stm_qty":        3,
+		},
+	})
+	if createResult["isError"] != true {
+		t.Fatalf("mcp create_record same-loc should be a tool error: %+v", createResult)
+	}
+}
+
+func TestAPIAndMCPParentFilterForSubtables(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	final := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":    "PF-FG-1",
+		"itm_type":   "final",
+		"itm_status": "Active",
+	})
+	part := createRecord(t, client, token, ts.URL, "items", map[string]any{
+		"itm_sku":    "PF-PT-1",
+		"itm_type":   "part",
+		"itm_status": "Active",
+	})
+	bomA := createRecord(t, client, token, ts.URL, "boms", map[string]any{
+		"bom_doc_number": "PF-BOM-A",
+		"itm_id":         final,
+		"bom_status":     "Active",
+	})
+	bomB := createRecord(t, client, token, ts.URL, "boms", map[string]any{
+		"bom_doc_number": "PF-BOM-B",
+		"itm_id":         final,
+		"bom_status":     "Active",
+	})
+	compA := createRecord(t, client, token, ts.URL, "bom_components", map[string]any{
+		"bom_id":  bomA,
+		"itm_id":  part,
+		"boc_qty": 1,
+	})
+	_ = createRecord(t, client, token, ts.URL, "bom_components", map[string]any{
+		"bom_id":  bomB,
+		"itm_id":  part,
+		"boc_qty": 2,
+	})
+
+	// REST: parent filter narrows to bomA only.
+	filteredResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/bom_components?parent_id="+bomA, token, nil)
+	if filteredResp.StatusCode != http.StatusOK {
+		body := readBody(t, filteredResp.Body)
+		t.Fatalf("rest filtered list status = %d, want 200, body=%s", filteredResp.StatusCode, body)
+	}
+	var filteredBody apiTableListResponse
+	decodeJSON(t, filteredResp.Body, &filteredBody)
+	if len(filteredBody.Rows) != 1 {
+		t.Fatalf("rest filtered rows = %d, want 1, payload=%+v", len(filteredBody.Rows), filteredBody)
+	}
+	if fmt.Sprint(filteredBody.Rows[0]["boc_id"]) != compA {
+		t.Fatalf("rest filtered row id = %v, want %s", filteredBody.Rows[0]["boc_id"], compA)
+	}
+	if fmt.Sprint(filteredBody.Rows[0]["bom_id"]) != bomA {
+		t.Fatalf("rest filtered row bom_id = %v, want %s", filteredBody.Rows[0]["bom_id"], bomA)
+	}
+
+	// REST: parent filter on a non-subtable must fail.
+	badResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/customers?parent_id=1", token, nil)
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("parent_id on non-subtable status = %d, want 400", badResp.StatusCode)
+	}
+	_ = badResp.Body.Close()
+
+	// REST: parent_field that does not match declared parent is rejected.
+	badFieldResp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/bom_components?parent_id="+bomA+"&parent_field=itm_id", token, nil)
+	if badFieldResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("mismatched parent_field status = %d, want 400", badFieldResp.StatusCode)
+	}
+	_ = badFieldResp.Body.Close()
+
+	// MCP: same filter via list_records.
+	mcpClient := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, mcpClient, ts.URL, "admin", "admin")
+	sessionID := initMCPSession(t, mcpClient, ts.URL, loginResp.Token)
+	mcpResult := mcpCallTool(t, mcpClient, ts.URL, loginResp.Token, sessionID, mcpToolListRecords, map[string]any{
+		"table":     "bom_components",
+		"parent_id": bomB,
+	})
+	structured, ok := mcpResult["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp filtered result missing structuredContent: %+v", mcpResult)
+	}
+	rows, ok := structured["rows"].([]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("mcp filtered rows = %+v, want 1", structured)
+	}
+	entry := rows[0].(map[string]any)
+	if fmt.Sprint(entry["bom_id"]) != bomB {
+		t.Fatalf("mcp filtered row bom_id = %v, want %s", entry["bom_id"], bomB)
+	}
+}
+
+func TestCSVImportViaAPIAndMCP(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+	login(t, client, ts.URL, "admin", "admin")
+	token := sessionCookieValue(t, client, ts.URL)
+
+	// REST multipart import.
+	csvBody := "cus_name_en,cus_phone,cus_status\n" +
+		"REST Import One,111,Active\n" +
+		"REST Import Two,222,Hold\n"
+	req := newCSVUploadRequest(t, http.MethodPost, ts.URL+"/api/tables/customers/import", "customers.csv", csvBody)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("rest import: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body := readBody(t, resp.Body)
+		t.Fatalf("rest import status = %d, want 200, body=%s", resp.StatusCode, body)
+	}
+	var importBody apiTableImportResponse
+	decodeJSON(t, resp.Body, &importBody)
+	if importBody.Table != "customers" || importBody.Imported != 2 {
+		t.Fatalf("rest import payload = %+v, want customers/2", importBody)
+	}
+
+	// MCP import tool.
+	mcpClient := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, mcpClient, ts.URL, "admin", "admin")
+	sessionID := initMCPSession(t, mcpClient, ts.URL, loginResp.Token)
+	mcpResult := mcpCallTool(t, mcpClient, ts.URL, loginResp.Token, sessionID, mcpToolImportCSV, map[string]any{
+		"table": "customers",
+		"csv": "cus_name_en,cus_phone,cus_status\n" +
+			"MCP Import One,333,Active\n" +
+			"MCP Import Two,444,Under Review\n",
+	})
+	mcpStruct, ok := mcpResult["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp import missing structuredContent: %+v", mcpResult)
+	}
+	if fmt.Sprint(mcpStruct["imported"]) != "2" || mcpStruct["table"] != "customers" {
+		t.Fatalf("mcp import payload = %+v", mcpStruct)
+	}
+
+	// Business-rule validation applies to CSV import too.
+	loc1 := createRecord(t, client, token, ts.URL, "locations", map[string]any{
+		"loc_name":   "CSV-LOC-1",
+		"loc_zone":   "storage",
+		"loc_status": "Active",
+	})
+	badCSV := "stm_doc_number,stm_date,stm_src_loc_id,stm_dst_loc_id,stm_qty\n" +
+		"CSV-BAD-MOVE,2026-04-12," + loc1 + "," + loc1 + ",1\n"
+	badResult := mcpCallTool(t, mcpClient, ts.URL, loginResp.Token, sessionID, mcpToolImportCSV, map[string]any{
+		"table": "stock_moves",
+		"csv":   badCSV,
+	})
+	if badResult["isError"] != true {
+		t.Fatalf("csv import with same-loc stock move should fail: %+v", badResult)
+	}
+
+	// Guest must be forbidden from the REST import endpoint.
+	guestClient := newHTTPClient(t)
+	login(t, guestClient, ts.URL, "guest", "guest")
+	guestToken := sessionCookieValue(t, guestClient, ts.URL)
+	guestReq := newCSVUploadRequest(t, http.MethodPost, ts.URL+"/api/tables/customers/import", "guest.csv", "cus_name_en\nGuest Co\n")
+	guestReq.Header.Set("Authorization", "Bearer "+guestToken)
+	guestResp, err := guestClient.Do(guestReq)
+	if err != nil {
+		t.Fatalf("guest import: %v", err)
+	}
+	if guestResp.StatusCode != http.StatusForbidden {
+		body := readBody(t, guestResp.Body)
+		t.Fatalf("guest rest import status = %d, want 403, body=%s", guestResp.StatusCode, body)
+	}
+	_ = guestResp.Body.Close()
+}
+
+func newCSVUploadRequest(t *testing.T, method, target, fileName, content string) *http.Request {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileWriter, err := writer.CreateFormFile("csv_file", fileName)
+	if err != nil {
+		t.Fatalf("create csv part: %v", err)
+	}
+	if _, err := io.Copy(fileWriter, strings.NewReader(content)); err != nil {
+		t.Fatalf("write csv content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	req, err := http.NewRequest(method, target, &body)
+	if err != nil {
+		t.Fatalf("new csv request: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
 }

@@ -414,6 +414,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/tables/{table}", s.cop.Handler(s.withSession(s.handleAPITableCreate)))
 	mux.Handle("PUT /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableUpdate)))
 	mux.Handle("DELETE /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableDelete)))
+	mux.Handle("POST /api/tables/{table}/import", s.cop.Handler(s.withSession(s.handleAPITableImport)))
 	mcpHandler := s.cop.Handler(s.newMCPHandler())
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("POST /mcp", mcpHandler)
@@ -706,13 +707,9 @@ func (s *Server) handleTableSave(w http.ResponseWriter, r *http.Request) {
 		values[parentCtx.Field] = parentCtx.ParsedID
 	}
 
-	if table.Name == "stock_moves" {
-		src := values["stm_src_loc_id"]
-		dst := values["stm_dst_loc_id"]
-		if src != nil && dst != nil && fmt.Sprint(src) != "" && fmt.Sprint(dst) != "" && fmt.Sprint(src) == fmt.Sprint(dst) {
-			s.renderFormError(w, r, principal, table, rowID, values, parentCtx, "Source and destination locations must be different.")
-			return
-		}
+	if err := validateBusinessRules(table, values); err != nil {
+		s.renderFormError(w, r, principal, table, rowID, values, parentCtx, err.Error())
+		return
 	}
 
 	if rowID == "" {
@@ -766,11 +763,6 @@ func (s *Server) handleTableDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTableImport(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	table, ok := s.authorizeTable(w, r, principal.Role, true)
-	if !ok {
-		return
-	}
-
 	file, _, err := r.FormFile("csv_file")
 	if err != nil {
 		s.renderInlineError(w, http.StatusBadRequest, "Select a CSV file to import.")
@@ -778,25 +770,42 @@ func (s *Server) handleTableImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	imported, err := s.store.ImportCSV(r.Context(), table.Name, file, func(field store.Field, raw string) (any, error) {
-		value, err := store.ParseFieldValue(field, raw)
-		if err != nil {
-			return nil, err
-		}
-		if field.Kind == store.KindPassword {
-			if strings.TrimSpace(raw) == "" {
-				return nil, nil
-			}
-			return auth.HashPassword(raw)
-		}
-		return value, nil
-	})
+	result, status, err := s.apiImportCSV(r.Context(), principal, r.PathValue("table"), file)
 	if err != nil {
-		s.renderInlineError(w, http.StatusBadRequest, err.Error())
+		if status == 403 {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if status == 404 {
+			http.NotFound(w, r)
+			return
+		}
+		s.renderInlineError(w, status, err.Error())
 		return
 	}
 
-	s.sendHTMXSuccess(w, fmt.Sprintf("Imported %d rows.", imported))
+	s.sendHTMXSuccess(w, fmt.Sprintf("Imported %d rows.", result.Imported))
+}
+
+func (s *Server) handleAPITableImport(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	if err := r.ParseMultipartForm(16 << 20); err != nil {
+		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid multipart body"})
+		return
+	}
+	file, _, err := r.FormFile("csv_file")
+	if err != nil {
+		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "csv_file is required"})
+		return
+	}
+	defer file.Close()
+
+	result, status, err := s.apiImportCSV(r.Context(), principal, r.PathValue("table"), file)
+	if err != nil {
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
@@ -829,6 +838,8 @@ func (s *Server) handleAPITableList(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("offset"),
 		r.URL.Query().Get("sort"),
 		r.URL.Query().Get("desc"),
+		r.URL.Query().Get("parent_field"),
+		r.URL.Query().Get("parent_id"),
 	)
 	if err != nil {
 		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: err.Error()})

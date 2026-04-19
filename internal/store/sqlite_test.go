@@ -40,7 +40,7 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 	imported, err := s.ImportCSV(ctx, "customers", strings.NewReader(""+
 		"cus_name_en,cus_phone,cus_status\n"+
 		"Import One,1000,Active\n"+
-		"Import Two,2000,Hold\n"), ParseFieldValue)
+		"Import Two,2000,Hold\n"), ImportOptions{Transform: ParseFieldValue})
 	if err != nil {
 		t.Fatalf("import customers csv: %v", err)
 	}

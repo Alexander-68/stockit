@@ -375,10 +375,24 @@ func (s *Store) ReferenceOptions(ctx context.Context, tableName string) ([]Optio
 	return options, rows.Err()
 }
 
-func (s *Store) ImportCSV(ctx context.Context, tableName string, reader io.Reader, transform func(Field, string) (any, error)) (int, error) {
+// ImportOptions parameterizes CSV import so higher layers can inject app-level
+// concerns (value transforms, business-rule validation) without the store
+// knowing about them.
+type ImportOptions struct {
+	// Transform converts a raw CSV cell into the stored Go value (required).
+	Transform func(Field, string) (any, error)
+	// BeforeInsert, if set, receives the assembled row values and may reject
+	// the row with an error before it reaches the database.
+	BeforeInsert func(values map[string]any) error
+}
+
+func (s *Store) ImportCSV(ctx context.Context, tableName string, reader io.Reader, opts ImportOptions) (int, error) {
 	table, ok := s.Table(tableName)
 	if !ok {
 		return 0, fmt.Errorf("unknown table %q", tableName)
+	}
+	if opts.Transform == nil {
+		return 0, fmt.Errorf("ImportOptions.Transform is required")
 	}
 
 	csvReader := csv.NewReader(reader)
@@ -416,12 +430,18 @@ func (s *Store) ImportCSV(ctx context.Context, tableName string, reader io.Reade
 			if !ok {
 				continue
 			}
-			parsedValue, err := transform(field, rawValue)
+			parsedValue, err := opts.Transform(field, rawValue)
 			if err != nil {
 				return inserted, fmt.Errorf("parse csv field %s: %w", field.Column, err)
 			}
 			if parsedValue != nil {
 				values[field.Column] = parsedValue
+			}
+		}
+
+		if opts.BeforeInsert != nil {
+			if err := opts.BeforeInsert(values); err != nil {
+				return inserted, err
 			}
 		}
 
@@ -769,7 +789,39 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
+	if err := s.renameStatusValue(ctx, "Absolete", "Obsolete"); err != nil {
+		return err
+	}
+
 	return s.seedDefaults(ctx)
+}
+
+// renameStatusValue rewrites a legacy status value across every status column
+// that uses the shared statusOptions enum. Kept as a one-shot data migration so
+// older databases do not carry the misspelled "Absolete" forward.
+func (s *Store) renameStatusValue(ctx context.Context, oldValue, newValue string) error {
+	columns := []struct {
+		table  string
+		column string
+	}{
+		{table: "customers", column: "cus_status"},
+		{table: "suppliers", column: "sup_status"},
+		{table: "locations", column: "loc_status"},
+		{table: "items", column: "itm_status"},
+		{table: "boms", column: "bom_status"},
+	}
+	for _, c := range columns {
+		query := fmt.Sprintf(
+			`UPDATE %s SET %s = ? WHERE %s = ?`,
+			quoteIdent(c.table),
+			quoteIdent(c.column),
+			quoteIdent(c.column),
+		)
+		if _, err := s.db.ExecContext(ctx, query, newValue, oldValue); err != nil {
+			return fmt.Errorf("rename status value in %s.%s: %w", c.table, c.column, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) ensureColumn(ctx context.Context, tableName, columnName, columnDef string) error {

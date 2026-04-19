@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
+	"stockit/internal/auth"
 	"stockit/internal/store"
 )
 
@@ -83,6 +85,11 @@ type apiTableDeleteResponse struct {
 	Deleted bool   `json:"deleted"`
 }
 
+type apiTableImportResponse struct {
+	Table    string `json:"table"`
+	Imported int    `json:"imported"`
+}
+
 type apiErrorResponse struct {
 	Error string `json:"error"`
 }
@@ -101,10 +108,12 @@ type apiTableSchemaEnvelope struct {
 }
 
 type tableListInput struct {
-	Sort   string
-	Desc   bool
-	Limit  int
-	Offset int
+	Sort        string
+	Desc        bool
+	Limit       int
+	Offset      int
+	ParentField string
+	ParentID    string
 }
 
 func (s *Server) roleHasAnyWritableTable(role string) bool {
@@ -181,11 +190,17 @@ func (s *Server) apiListRecords(ctx context.Context, principal Principal, tableN
 		return apiTableListResponse{}, status, err
 	}
 
+	filter, status, err := resolveParentFilter(table, input.ParentField, input.ParentID)
+	if err != nil {
+		return apiTableListResponse{}, status, err
+	}
+
 	result, err := s.store.List(ctx, table.Name, store.ListOptions{
 		Sort:   table.SortColumn(input.Sort),
 		Desc:   input.Desc,
 		Limit:  input.Limit,
 		Offset: input.Offset,
+		Filter: filter,
 	})
 	if err != nil {
 		return apiTableListResponse{}, 500, err
@@ -196,6 +211,40 @@ func (s *Server) apiListRecords(ctx context.Context, principal Principal, tableN
 		Rows:    result.Rows,
 		HasMore: result.HasMore,
 	}, 0, nil
+}
+
+// resolveParentFilter converts optional parent_field/parent_id inputs into a
+// single-column filter usable by the store. Empty parent_id means no parent
+// filter; a populated parent_id is only allowed on subtables and must target
+// that subtable's declared parent field, so callers cannot use this to filter
+// by arbitrary columns.
+func resolveParentFilter(table store.TableDef, parentField, parentID string) (map[string]any, int, error) {
+	parentID = strings.TrimSpace(parentID)
+	parentField = strings.TrimSpace(parentField)
+	if parentID == "" {
+		if parentField != "" {
+			return nil, 400, fmt.Errorf("parent_id is required when parent_field is set")
+		}
+		return nil, 0, nil
+	}
+	if !table.IsSubtable() {
+		return nil, 400, fmt.Errorf("table %q does not support parent filtering", table.Name)
+	}
+	if parentField == "" {
+		parentField = table.ParentField
+	}
+	if parentField != table.ParentField {
+		return nil, 400, fmt.Errorf("parent_field must be %q for table %q", table.ParentField, table.Name)
+	}
+	field, ok := table.Field(parentField)
+	if !ok {
+		return nil, 500, fmt.Errorf("unknown parent field %q for table %q", parentField, table.Name)
+	}
+	parsed, err := store.ParseFieldValue(field, parentID)
+	if err != nil || parsed == nil {
+		return nil, 400, fmt.Errorf("invalid parent_id")
+	}
+	return map[string]any{field.Column: parsed}, 0, nil
 }
 
 func (s *Server) apiGetRecord(ctx context.Context, principal Principal, tableName, id string) (apiTableRowResponse, int, error) {
@@ -236,6 +285,10 @@ func (s *Server) apiCreateRecord(ctx context.Context, principal Principal, table
 	}
 	s.applyAutomaticUserID(table, principal, true, values)
 
+	if err := validateBusinessRules(table, values); err != nil {
+		return apiTableRowResponse{}, 400, err
+	}
+
 	id, err := s.store.Insert(ctx, table.Name, values)
 	if err != nil {
 		return apiTableRowResponse{}, classifyStoreError(err), err
@@ -270,6 +323,10 @@ func (s *Server) apiUpdateRecord(ctx context.Context, principal Principal, table
 		return apiTableRowResponse{}, 400, err
 	}
 	s.applyAutomaticUserID(table, principal, false, values)
+
+	if err := validateBusinessRules(table, values); err != nil {
+		return apiTableRowResponse{}, 400, err
+	}
 
 	if err := s.store.Update(ctx, table.Name, normalizedID, values); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -331,6 +388,49 @@ func (s *Server) apiDeleteRecord(ctx context.Context, principal Principal, table
 	}, 0, nil
 }
 
+func (s *Server) apiImportCSV(ctx context.Context, principal Principal, tableName string, reader io.Reader) (apiTableImportResponse, int, error) {
+	table, status, err := s.resolveTableForRole(principal.Role, tableName, true)
+	if err != nil {
+		return apiTableImportResponse{}, status, err
+	}
+	if !table.ImportEnabled {
+		return apiTableImportResponse{}, 400, fmt.Errorf("CSV import is not enabled for table %q", table.Name)
+	}
+	if reader == nil {
+		return apiTableImportResponse{}, 400, fmt.Errorf("csv payload is required")
+	}
+
+	imported, err := s.store.ImportCSV(ctx, table.Name, reader, store.ImportOptions{
+		Transform:    csvImportTransform,
+		BeforeInsert: func(values map[string]any) error { return validateBusinessRules(table, values) },
+	})
+	if err != nil {
+		status := classifyStoreError(err)
+		if status == 500 {
+			status = 400
+		}
+		return apiTableImportResponse{}, status, err
+	}
+	return apiTableImportResponse{Table: table.Name, Imported: imported}, 200, nil
+}
+
+// csvImportTransform mirrors the behavior of the HTML form import: text is
+// passed through ParseFieldValue, and password cells are Argon2id-hashed
+// (empty passwords are left unset so existing hashes survive re-import).
+func csvImportTransform(field store.Field, raw string) (any, error) {
+	value, err := store.ParseFieldValue(field, raw)
+	if err != nil {
+		return nil, err
+	}
+	if field.Kind == store.KindPassword {
+		if strings.TrimSpace(raw) == "" {
+			return nil, nil
+		}
+		return auth.HashPassword(raw)
+	}
+	return value, nil
+}
+
 func (s *Server) resolveTableForRole(role, tableName string, write bool) (store.TableDef, int, error) {
 	tableName = strings.TrimSpace(tableName)
 	table, ok := s.store.Table(tableName)
@@ -365,7 +465,7 @@ func normalizeRecordID(table store.TableDef, rawID string) (string, int, error) 
 	return fmt.Sprint(value), 0, nil
 }
 
-func parseListInput(limitValue, offsetValue, sortValue, descValue string) (tableListInput, error) {
+func parseListInput(limitValue, offsetValue, sortValue, descValue, parentFieldValue, parentIDValue string) (tableListInput, error) {
 	limit, err := parseBoundedInt(limitValue, 30, 1, 200, "limit")
 	if err != nil {
 		return tableListInput{}, err
@@ -380,10 +480,12 @@ func parseListInput(limitValue, offsetValue, sortValue, descValue string) (table
 	}
 
 	return tableListInput{
-		Sort:   strings.TrimSpace(sortValue),
-		Desc:   desc,
-		Limit:  limit,
-		Offset: offset,
+		Sort:        strings.TrimSpace(sortValue),
+		Desc:        desc,
+		Limit:       limit,
+		Offset:      offset,
+		ParentField: strings.TrimSpace(parentFieldValue),
+		ParentID:    strings.TrimSpace(parentIDValue),
 	}, nil
 }
 
@@ -401,6 +503,20 @@ func parseBoundedInt(raw string, defaultValue, minValue, maxValue int, fieldName
 		return 0, fmt.Errorf("%s must be between %d and %d", fieldName, minValue, maxValue)
 	}
 	return parsed, nil
+}
+
+// validateBusinessRules applies cross-field constraints that belong to the
+// application layer (not enforceable by SQLite alone) and must hold regardless
+// of whether the request came from REST, MCP, the HTML form, or CSV import.
+func validateBusinessRules(table store.TableDef, values map[string]any) error {
+	if table.Name == "stock_moves" {
+		src, okSrc := values["stm_src_loc_id"]
+		dst, okDst := values["stm_dst_loc_id"]
+		if okSrc && src != nil && okDst && dst != nil && fmt.Sprint(src) == fmt.Sprint(dst) {
+			return fmt.Errorf("Source and destination locations must be different")
+		}
+	}
+	return nil
 }
 
 // classifyStoreError maps a store/sql error to an HTTP status code. Constraint

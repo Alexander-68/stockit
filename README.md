@@ -17,9 +17,16 @@ The long-term direction is for StockIt to act mainly as a validated backend for 
   - `quotes`
   - `quote_components`
   - `purchase_orders`
-  - `po_components`
+  - `po_components` with IQC fields
   - `sales_orders`
   - `sales_order_components`
+  - `manufacturing_orders`
+  - `mfo_components`
+  - `invoices`
+  - `invoice_components`
+  - `adjustments`
+  - `adjustment_components`
+  - `stock_moves`
 - Automatic default user seeding:
   - `admin / admin`
   - `user / user`
@@ -41,15 +48,18 @@ The long-term direction is for StockIt to act mainly as a validated backend for 
   - table catalog discovery
   - table schema discovery
   - validated generic record list/get/create/update/delete
+  - parent-filtered list (`?parent_id=<value>` for subtables)
+  - multipart CSV import (`POST /api/tables/{table}/import`)
 - Streamable HTTP MCP server powered by `github.com/mark3labs/mcp-go` on `/mcp`, protected by the same StockIt session authentication as the REST API.
 - MCP tools aligned with REST API operations:
   - `stockit_list_tables`
   - `stockit_describe_table`
-  - `stockit_list_records`
+  - `stockit_list_records` (supports `parent_id` / `parent_field` filters for subtables)
   - `stockit_get_record`
   - `stockit_create_record`
   - `stockit_update_record`
   - `stockit_delete_record`
+  - `stockit_import_csv`
 - Root `openapi.yaml` maintained as the REST API contract.
 - Embedded local assets:
   - HTMX
@@ -94,7 +104,9 @@ The long-term direction is for StockIt to act mainly as a validated backend for 
   - `Inactive`
   - `Hold`
   - `Phase-Out`
-  - `Absolete`
+  - `Obsolete`
+- Databases created with earlier builds that stored the misspelled `Absolete`
+  value are automatically rewritten to `Obsolete` on startup.
 
 ## Run
 
@@ -126,11 +138,12 @@ Current REST endpoints:
 - `GET /api/me`
 - `GET /api/tables`
 - `GET /api/tables/{table}/schema`
-- `GET /api/tables/{table}`
+- `GET /api/tables/{table}` (supports `?parent_id=<value>` and optional `?parent_field=<column>` for subtables)
 - `GET /api/tables/{table}/{id}`
 - `POST /api/tables/{table}`
 - `PUT /api/tables/{table}/{id}`
 - `DELETE /api/tables/{table}/{id}`
+- `POST /api/tables/{table}/import` (multipart `csv_file` upload)
 
 Current MCP transport:
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -17,6 +18,7 @@ const (
 	mcpToolCreateRecord = "stockit_create_record"
 	mcpToolUpdateRecord = "stockit_update_record"
 	mcpToolDeleteRecord = "stockit_delete_record"
+	mcpToolImportCSV    = "stockit_import_csv"
 )
 
 type mcpDescribeTableArgs struct {
@@ -24,11 +26,13 @@ type mcpDescribeTableArgs struct {
 }
 
 type mcpListRecordsArgs struct {
-	Table  string `json:"table"`
-	Sort   string `json:"sort"`
-	Desc   bool   `json:"desc"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
+	Table       string `json:"table"`
+	Sort        string `json:"sort"`
+	Desc        bool   `json:"desc"`
+	Limit       int    `json:"limit"`
+	Offset      int    `json:"offset"`
+	ParentField string `json:"parent_field"`
+	ParentID    string `json:"parent_id"`
 }
 
 type mcpGetRecordArgs struct {
@@ -52,6 +56,11 @@ type mcpDeleteRecordArgs struct {
 	ID    string `json:"id"`
 }
 
+type mcpImportCSVArgs struct {
+	Table string `json:"table"`
+	CSV   string `json:"csv"`
+}
+
 func (s *Server) newMCPHandler() httpHandlerWithErr {
 	mcpSrv := mcpserver.NewMCPServer(
 		"StockIt",
@@ -68,7 +77,7 @@ func (s *Server) newMCPHandler() httpHandlerWithErr {
 			filtered := make([]mcp.Tool, 0, len(tools))
 			for _, tool := range tools {
 				switch tool.Name {
-				case mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord:
+				case mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord, mcpToolImportCSV:
 					continue
 				default:
 					filtered = append(filtered, tool)
@@ -142,6 +151,8 @@ func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {
 			mcp.WithBoolean("desc", mcp.Description("Whether to sort descending")),
 			mcp.WithNumber("limit", mcp.Description("Page size from 1 to 200; omit or pass 0 for the default of 30")),
 			mcp.WithNumber("offset", mcp.Description("Row offset starting at 0")),
+			mcp.WithString("parent_id", mcp.Description("Restrict to rows whose parent foreign key equals this id; only valid for subtables")),
+			mcp.WithString("parent_field", mcp.Description("Optional subtable parent column name; defaults to the table's declared parent field")),
 		),
 		s.handleMCPListRecords,
 	)
@@ -197,6 +208,19 @@ func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {
 			mcp.WithString("id", mcp.Required(), mcp.Description("Primary key value")),
 		),
 		s.handleMCPDeleteRecord,
+	)
+
+	mcpSrv.AddTool(
+		mcp.NewTool(
+			mcpToolImportCSV,
+			mcp.WithDescription("Bulk-import rows into a StockIt table from a CSV payload using the same rules as the REST API and web UI."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithSchemaAdditionalProperties(false),
+			mcp.WithString("table", mcp.Required(), mcp.Description("StockIt table name")),
+			mcp.WithString("csv", mcp.Required(), mcp.Description("CSV document including a header row. Column headers match table field columns or labels.")),
+		),
+		s.handleMCPImportCSV,
 	)
 }
 
@@ -307,6 +331,24 @@ func (s *Server) handleMCPDeleteRecord(ctx context.Context, request mcp.CallTool
 	return mcp.NewToolResultStructured(result, fmt.Sprintf("Deleted %s record %s.", result.Table, result.ID)), nil
 }
 
+func (s *Server) handleMCPImportCSV(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args mcpImportCSVArgs
+	if err := request.BindArguments(&args); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if strings.TrimSpace(args.CSV) == "" {
+		return mcp.NewToolResultError("csv is required"), nil
+	}
+
+	principal := principalFromContext(ctx)
+	result, _, err := s.apiImportCSV(ctx, principal, args.Table, strings.NewReader(args.CSV))
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Imported %d rows into %s.", result.Imported, result.Table)), nil
+}
+
 func mcpListInput(args mcpListRecordsArgs) (tableListInput, error) {
 	limit := args.Limit
 	if limit == 0 {
@@ -320,9 +362,11 @@ func mcpListInput(args mcpListRecordsArgs) (tableListInput, error) {
 	}
 
 	return tableListInput{
-		Sort:   args.Sort,
-		Desc:   args.Desc,
-		Limit:  limit,
-		Offset: args.Offset,
+		Sort:        args.Sort,
+		Desc:        args.Desc,
+		Limit:       limit,
+		Offset:      args.Offset,
+		ParentField: args.ParentField,
+		ParentID:    args.ParentID,
 	}, nil
 }

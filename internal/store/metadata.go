@@ -23,7 +23,7 @@ const (
 
 var (
 	roleOptions     = []string{"admin", "user", "guest"}
-	statusOptions   = []string{"Draft", "Under Review", "Active", "Inactive", "Hold", "Phase-Out", "Absolete"}
+	statusOptions   = []string{"Draft", "Under Review", "Active", "Inactive", "Hold", "Phase-Out", "Obsolete"}
 	poStatusOptions = []string{
 		"issued",
 		"approved",
