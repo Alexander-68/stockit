@@ -158,17 +158,17 @@ MCP tools are self-discoverable through `tools/list`, but they are still documen
 Claude Code (the CLI) can talk to the StockIt MCP endpoint over HTTP using a bearer token obtained from `/api/auth/login`.
 
 1. Obtain a bearer token (PowerShell):
-
+   
    ```powershell
    Invoke-RestMethod -Uri http://127.0.0.1:8080/api/auth/login `
      -Method Post -ContentType "application/json" `
      -Body '{"login_name":"admin","password":"admin"}'
    ```
-
+   
    The response contains a `token` field, for example `abc123...`.
 
 2. Register the MCP server in Claude Code, passing the token as an `Authorization` header:
-
+   
    ```powershell
    claude mcp add --transport http stockit http://127.0.0.1:8080/mcp `
      --header "Authorization: Bearer <token>"
