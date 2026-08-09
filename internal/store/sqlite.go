@@ -256,7 +256,7 @@ func (s *Store) Update(ctx context.Context, tableName string, id string, values 
 		return fmt.Errorf("unknown table %q", tableName)
 	}
 
-	columns := table.UpdatableColumns(values)
+	columns := table.InsertableColumns(values)
 	if len(columns) == 0 {
 		return nil
 	}

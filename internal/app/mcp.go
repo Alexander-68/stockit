@@ -61,7 +61,7 @@ type mcpImportCSVArgs struct {
 	CSV   string `json:"csv"`
 }
 
-func (s *Server) newMCPHandler() httpHandlerWithErr {
+func (s *Server) newMCPHandler() http.Handler {
 	mcpSrv := mcpserver.NewMCPServer(
 		"StockIt",
 		"1.0.0",
@@ -95,24 +95,17 @@ func (s *Server) newMCPHandler() httpHandlerWithErr {
 		mcpserver.WithSessionIdleTTL(sessionIdleTimeout),
 	)
 
-	return func(w http.ResponseWriter, r *http.Request) error {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := s.principalFromRequest(r)
 		if !ok {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "authentication required", http.StatusUnauthorized)
-			return nil
+			return
 		}
 
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		streamable.ServeHTTP(w, r.WithContext(ctx))
-		return nil
-	}
-}
-
-type httpHandlerWithErr func(http.ResponseWriter, *http.Request) error
-
-func (h httpHandlerWithErr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	_ = h(w, r)
+	})
 }
 
 func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {

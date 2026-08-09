@@ -644,7 +644,24 @@ func TestBOMCascadeAndLastAdminDeleteGuard(t *testing.T) {
 	}
 }
 
-func TestBOMSubtableFlowUsesParentContext(t *testing.T) {
+func TestSubtableFlows(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"BOM", runBOMSubtableFlowUsesParentContext},
+		{"PurchaseOrder", runPurchaseOrderSubtableFlowUsesParentContext},
+		{"Quote", runQuoteSubtableFlowUsesParentContext},
+		{"SalesOrder", runSalesOrderSubtableFlowUsesParentContext},
+		{"Adjustment", runAdjustmentSubtableFlowUsesParentContext},
+		{"Invoice", runInvoiceSubtableFlowUsesParentContext},
+		{"ManufacturingOrder", runManufacturingOrderSubtableFlowUsesParentContext},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func runBOMSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -812,7 +829,7 @@ func TestBOMSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
-func TestPurchaseOrderSubtableFlowUsesParentContext(t *testing.T) {
+func runPurchaseOrderSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -1011,7 +1028,7 @@ func TestPurchaseOrderSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
-func TestQuoteSubtableFlowUsesParentContext(t *testing.T) {
+func runQuoteSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -1196,7 +1213,7 @@ func TestQuoteSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
-func TestSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
+func runSalesOrderSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -1515,7 +1532,7 @@ func TestStockMovesTopLevelFlow(t *testing.T) {
 	}
 }
 
-func TestAdjustmentSubtableFlowUsesParentContext(t *testing.T) {
+func runAdjustmentSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -1660,7 +1677,7 @@ func TestAdjustmentSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
-func TestInvoiceSubtableFlowUsesParentContext(t *testing.T) {
+func runInvoiceSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -1799,7 +1816,7 @@ func TestInvoiceSubtableFlowUsesParentContext(t *testing.T) {
 	}
 }
 
-func TestManufacturingOrderSubtableFlowUsesParentContext(t *testing.T) {
+func runManufacturingOrderSubtableFlowUsesParentContext(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 

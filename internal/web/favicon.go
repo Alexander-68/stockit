@@ -16,15 +16,15 @@ var (
 )
 
 func Favicon16() []byte {
-	return cloneBytes(favicon16)
+	return favicon16
 }
 
 func Favicon32() []byte {
-	return cloneBytes(favicon32)
+	return favicon32
 }
 
 func FaviconICO() []byte {
-	return cloneBytes(faviconICO)
+	return faviconICO
 }
 
 func mustPNG(size int) []byte {
@@ -90,10 +90,4 @@ func mustICO(pngBytes []byte) []byte {
 		panic(err)
 	}
 	return buf.Bytes()
-}
-
-func cloneBytes(source []byte) []byte {
-	cloned := make([]byte, len(source))
-	copy(cloned, source)
-	return cloned
 }

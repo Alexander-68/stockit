@@ -47,8 +47,8 @@ var (
 		"complete",
 		"inactive",
 	}
-	currencyOptions       = []string{"USD", "TWD", "CNY", "EUR"}
-	adjustmentReasons  = []string{"cycle_count", "damage", "loss", "found", "correction", "write_off", "other"}
+	currencyOptions   = []string{"USD", "TWD", "CNY", "EUR"}
+	adjustmentReasons = []string{"cycle_count", "damage", "loss", "found", "correction", "write_off", "other"}
 )
 
 type Field struct {
@@ -681,10 +681,6 @@ func (t TableDef) InsertableColumns(values map[string]any) []string {
 		}
 	}
 	return columns
-}
-
-func (t TableDef) UpdatableColumns(values map[string]any) []string {
-	return t.InsertableColumns(values)
 }
 
 func (t TableDef) CanRead(role string) bool {
