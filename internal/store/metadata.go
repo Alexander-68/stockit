@@ -47,8 +47,14 @@ var (
 		"complete",
 		"inactive",
 	}
-	currencyOptions   = []string{"USD", "TWD", "CNY", "EUR"}
-	adjustmentReasons = []string{"cycle_count", "damage", "loss", "found", "correction", "write_off", "other"}
+	currencyOptions        = []string{"USD", "TWD", "CNY", "EUR"}
+	adjustmentReasons      = []string{"cycle_count", "damage", "loss", "found", "correction", "write_off", "other"}
+	obligationTypes        = []string{"payable", "receivable"}
+	obligationSources      = []string{"purchase_order", "sales_order", "invoice", "payroll", "other"}
+	obligationStatuses     = []string{"planned", "due", "paid", "cancelled"}
+	reconciliationStatuses = []string{"unreconciled", "reconciled", "ignored"}
+	designationDirections  = []string{"inflow", "outflow", "either"}
+	designationDefaults    = []string{"INVENTORY", "COGS", "GOODS", "SERVICES", "SHIPPING", "PAYROLL", "TAX", "BANK_FEE", "RENT", "UTILITIES", "SALES_REVENUE", "CUSTOMER_REFUND", "TRANSFER", "OTHER"}
 )
 
 type Field struct {
@@ -616,6 +622,30 @@ func AllTables() map[string]TableDef {
 				{Column: "sor_shipped_trackno", Label: "shipped_trackno", Kind: KindText, Editable: true, List: true, Sortable: true},
 				{Column: "soc_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
 				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "bank_accounts", Label: "Bank Account", PrimaryKey: "bnk_id", TitleColumn: "bnk_name", ReferenceCols: []string{"bnk_id", "bnk_name", "bnk_currency"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "bnk_name", ImportEnabled: true,
+			Fields: []Field{
+				{Column: "bnk_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "bnk_name", Label: "name", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "bnk_institution", Label: "institution", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "bnk_currency", Label: "currency", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "bnk_account_reference", Label: "account_reference", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "bnk_status", Label: "status", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: statusOptions}, {Column: "bnk_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "designation_codes", Label: "Designation Code", PrimaryKey: "dsg_id", TitleColumn: "dsg_code", ReferenceCols: []string{"dsg_id", "dsg_code", "dsg_name"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "dsg_code", ImportEnabled: true,
+			Fields: []Field{
+				{Column: "dsg_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "dsg_code", Label: "code", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "dsg_name", Label: "name", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "dsg_direction", Label: "direction", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: designationDirections}, {Column: "dsg_status", Label: "status", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: statusOptions}, {Column: "dsg_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "financial_obligations", Label: "Financial Obligation", PrimaryKey: "fob_id", TitleColumn: "fob_label", ReferenceCols: []string{"fob_id", "fob_label", "fob_due_date", "fob_status"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "fob_due_date", ImportEnabled: true,
+			Fields: []Field{
+				{Column: "fob_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "fob_type", Label: "type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationTypes}, {Column: "fob_source_type", Label: "source_type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationSources}, {Column: "fob_source_id", Label: "source_id", Kind: KindInteger, Editable: true, List: true, Sortable: true}, {Column: "fob_label", Label: "label", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_due_date", Label: "due_date", Kind: KindDate, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_amount_minor", Label: "amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_currency", Label: "currency", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "fob_status", Label: "status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationStatuses}, {Column: "fob_counterparty", Label: "counterparty", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "fob_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "bank_transactions", Label: "Bank Transaction", PrimaryKey: "btx_id", TitleColumn: "btx_description", ReferenceCols: []string{"btx_id", "btx_date", "btx_amount_minor"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "btx_date", ImportEnabled: true,
+			Fields: []Field{
+				{Column: "btx_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "bnk_id", Label: "bank_account", Kind: KindForeign, Required: true, Editable: true, List: true, Sortable: true, RefTable: "bank_accounts"}, {Column: "btx_date", Label: "date", Kind: KindDate, Required: true, Editable: true, List: true, Sortable: true}, {Column: "btx_amount_minor", Label: "amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "btx_designation_code", Label: "designation_code", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "btx_description", Label: "description", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "btx_counterparty", Label: "counterparty", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "btx_external_reference", Label: "external_reference", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "fob_id", Label: "obligation", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "financial_obligations"}, {Column: "btx_reconciliation_status", Label: "reconciliation_status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: reconciliationStatuses}, {Column: "btx_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
 		},
 	}

@@ -3003,8 +3003,69 @@ func idColumn(table string) string {
 		return "adc_id"
 	case "stock_moves":
 		return "stm_id"
+	case "bank_accounts":
+		return "bnk_id"
+	case "designation_codes":
+		return "dsg_id"
+	case "financial_obligations":
+		return "fob_id"
+	case "bank_transactions":
+		return "btx_id"
 	default:
 		return "id"
+	}
+}
+
+func TestCashPlanningRESTFlow(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := newServerHTTPClient(t, ts.server)
+	login := apiLogin(t, client, ts.URL, "admin", "admin")
+
+	account := createRecord(t, client, login.Token, ts.URL, "bank_accounts", map[string]any{
+		"bnk_name": "Operating USD", "bnk_currency": "USD",
+	})
+	obligation := createRecord(t, client, login.Token, ts.URL, "financial_obligations", map[string]any{
+		"fob_type": "payable", "fob_source_type": "purchase_order", "fob_label": "prepay",
+		"fob_due_date": "2026-08-20", "fob_amount_minor": 25000, "fob_currency": "USD", "fob_status": "planned",
+	})
+	tx := createRecord(t, client, login.Token, ts.URL, "bank_transactions", map[string]any{
+		"bnk_id": account, "btx_date": "2026-08-20", "btx_amount_minor": -25000,
+		"btx_designation_code": "GOODS", "fob_id": obligation, "btx_reconciliation_status": "reconciled",
+	})
+	if tx == "" {
+		t.Fatal("bank transaction id is empty")
+	}
+
+	bad := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/financial_obligations", login.Token, map[string]any{
+		"fob_type": "payable", "fob_source_type": "purchase_order", "fob_label": "invalid",
+		"fob_due_date": "2026-08-20", "fob_amount_minor": 0, "fob_currency": "USD", "fob_status": "planned",
+	})
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("zero obligation amount status = %d, want 400", bad.StatusCode)
+	}
+	_ = bad.Body.Close()
+}
+
+func TestCashPlanningMCPFlow(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	client := newServerHTTPClient(t, ts.server)
+	login := apiLogin(t, client, ts.URL, "admin", "admin")
+	sessionID := initMCPSession(t, client, ts.URL, login.Token)
+
+	result := mcpCallTool(t, client, ts.URL, login.Token, sessionID, mcpToolCreateRecord, map[string]any{
+		"table":  "bank_accounts",
+		"values": map[string]any{"bnk_name": "Operating TWD", "bnk_currency": "TWD"},
+	})
+	if result["isError"] == true {
+		t.Fatalf("mcp bank account create failed: %+v", result)
+	}
+	list := mcpCallTool(t, client, ts.URL, login.Token, sessionID, mcpToolListRecords, map[string]any{
+		"table": "bank_accounts", "limit": 10,
+	})
+	if list["isError"] == true {
+		t.Fatalf("mcp bank account list failed: %+v", list)
 	}
 }
 

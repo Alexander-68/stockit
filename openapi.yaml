@@ -6,6 +6,13 @@ info:
     StockIt REST API for warehouse data access. The REST API and MCP tools are intentionally aligned:
     table catalog/schema discovery, record list/get/create/update/delete, and shared session authentication.
     MCP transport is documented in README.md and StokIt_Specification.md rather than OpenAPI.
+
+    Cash-planning tables include bank_accounts, designation_codes, financial_obligations,
+    and bank_transactions. Financial obligations represent expected payable or receivable
+    payments, including multiple purchase-order installments and one sales-order payment.
+    Money fields use integer minor units with an accompanying currency; bank transaction
+    amounts are signed (positive inflow, negative outflow). Bank balances are derived from
+    bank transactions.
 servers:
   - url: http://127.0.0.1:8080
     description: Default HTTP listener
@@ -308,6 +315,10 @@ components:
           - adjustments
           - adjustment_components
           - stock_moves
+          - bank_accounts
+          - designation_codes
+          - financial_obligations
+          - bank_transactions
     RecordID:
       name: id
       in: path

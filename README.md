@@ -27,6 +27,10 @@ The long-term direction is for StockIt to act mainly as a validated backend for 
   - `adjustments`
   - `adjustment_components`
   - `stock_moves`
+  - `bank_accounts`
+  - `designation_codes`
+  - `financial_obligations` for expected payable/receivable cash flows and PO installment schedules
+  - `bank_transactions` for signed actual account movements and reconciliation
 - Automatic default user seeding:
   - `admin / admin`
   - `user / user`
@@ -61,6 +65,13 @@ The long-term direction is for StockIt to act mainly as a validated backend for 
   - `stockit_delete_record`
   - `stockit_import_csv`
 - Root `openapi.yaml` maintained as the REST API contract.
+
+Cash planning:
+
+- Purchase-order installments are separate `financial_obligations` rows (`prepay`, `first part`, `second part`, `final`).
+- Sales orders use one receivable obligation for estimated payment date.
+- Money uses integer minor units plus currency; bank transaction amounts are signed (positive inflow, negative outflow).
+- Bank balances are derived from `bank_transactions`, not stored separately.
 - Embedded local assets:
   - HTMX
   - Tailwind CSS

@@ -516,6 +516,19 @@ func validateBusinessRules(table store.TableDef, values map[string]any) error {
 			return fmt.Errorf("Source and destination locations must be different")
 		}
 	}
+	if table.Name == "financial_obligations" {
+		if amount, ok := values["fob_amount_minor"].(int64); ok && amount <= 0 {
+			return fmt.Errorf("fob_amount_minor must be positive")
+		}
+		if amount, ok := values["fob_amount_minor"].(float64); ok && amount <= 0 {
+			return fmt.Errorf("fob_amount_minor must be positive")
+		}
+	}
+	if table.Name == "bank_transactions" {
+		if amount, ok := values["btx_amount_minor"].(int64); ok && amount == 0 {
+			return fmt.Errorf("btx_amount_minor must not be zero")
+		}
+	}
 	return nil
 }
 

@@ -752,6 +752,64 @@ func (s *Store) init(ctx context.Context) error {
 			FOREIGN KEY (adj_id) REFERENCES adjustments (adj_id),
 			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS bank_accounts (
+			bnk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			bnk_name TEXT NOT NULL,
+			bnk_institution TEXT,
+			bnk_currency TEXT NOT NULL,
+			bnk_account_reference TEXT,
+			bnk_status TEXT,
+			bnk_note TEXT,
+			usr_id INTEGER,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS designation_codes (
+			dsg_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			dsg_code TEXT NOT NULL UNIQUE,
+			dsg_name TEXT NOT NULL,
+			dsg_direction TEXT NOT NULL,
+			dsg_status TEXT,
+			dsg_note TEXT,
+			usr_id INTEGER,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS financial_obligations (
+			fob_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			fob_type TEXT NOT NULL,
+			fob_source_type TEXT NOT NULL,
+			fob_source_id INTEGER,
+			fob_label TEXT NOT NULL,
+			fob_due_date TEXT NOT NULL,
+			fob_amount_minor INTEGER NOT NULL,
+			fob_currency TEXT NOT NULL,
+			fob_status TEXT NOT NULL,
+			fob_counterparty TEXT,
+			fob_note TEXT,
+			usr_id INTEGER,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS bank_transactions (
+			btx_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			bnk_id INTEGER NOT NULL,
+			btx_date TEXT NOT NULL,
+			btx_amount_minor INTEGER NOT NULL,
+			btx_designation_code TEXT NOT NULL,
+			btx_description TEXT,
+			btx_counterparty TEXT,
+			btx_external_reference TEXT,
+			fob_id INTEGER,
+			btx_reconciliation_status TEXT NOT NULL,
+			btx_note TEXT,
+			usr_id INTEGER,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (bnk_id) REFERENCES bank_accounts (bnk_id),
+			FOREIGN KEY (btx_designation_code) REFERENCES designation_codes (dsg_code),
+			FOREIGN KEY (fob_id) REFERENCES financial_obligations (fob_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -875,6 +933,9 @@ func (s *Store) hasColumn(ctx context.Context, tableName, columnName string) (bo
 }
 
 func (s *Store) seedDefaults(ctx context.Context) error {
+	if err := s.seedDesignationCodes(ctx); err != nil {
+		return err
+	}
 	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`)
 	var count int
 	if err := row.Scan(&count); err != nil {
@@ -910,6 +971,24 @@ func (s *Store) seedDefaults(ctx context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+func (s *Store) seedDesignationCodes(ctx context.Context) error {
+	names := map[string]string{
+		"INVENTORY": "Inventory", "COGS": "Cost of Goods Sold", "GOODS": "Goods",
+		"SERVICES": "Services", "SHIPPING": "Shipping", "PAYROLL": "Payroll",
+		"TAX": "Tax", "BANK_FEE": "Bank Fee", "RENT": "Rent", "UTILITIES": "Utilities",
+		"SALES_REVENUE": "Sales Revenue", "CUSTOMER_REFUND": "Customer Refund",
+		"TRANSFER": "Internal Transfer", "OTHER": "Other",
+	}
+	for _, code := range designationDefaults {
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO designation_codes (dsg_code, dsg_name, dsg_direction, dsg_status) VALUES (?, ?, ?, 'Active')`,
+			code, names[code], "either"); err != nil {
+			return fmt.Errorf("seed designation code %s: %w", code, err)
+		}
+	}
 	return nil
 }
 

@@ -152,6 +152,10 @@ Key Database Schema (SQLite):
 
   * Adjustment components: adc\_id, Adjustment:adj\_id, Items:itm\_id, Locations:loc\_id, adc\_qty (signed delta), adc\_price, adc\_currency (USD, TWD, CNY, EUR), adc\_note. (ON DELETE Adjustment:adj\_id CASCADE)
 * Stock Move (STM): stm\_id(unique), stm\_doc\_number, stm\_date, Items:itm\_id, Locations:stm\_src\_loc\_id, Locations:stm\_dst\_loc\_id, stm\_qty (positive), PurchaseOrders:por\_id, SalesOrders:sor\_id, ManufacturingOrders:mfo\_id, Adjustments:adj\_id, Users:usr\_id, stm\_note. Ledger of physical movements; `stm_src_loc_id` NULL = receipt, `stm_dst_loc_id` NULL = issue, both set = transfer. Source and destination location must differ. Each FK references the originating document (at most one populated per row). Generated from finalized source documents by future logic; editable by hand for now.
+* Bank Account: bnk\_id, bnk\_name, bnk\_institution, bnk\_currency, bnk\_account\_reference, bnk\_status, bnk\_note, Users:usr\_id.
+* Designation Code: dsg\_id, dsg\_code, dsg\_name, dsg\_direction, dsg\_status, dsg\_note, Users:usr\_id. Seeded codes include INVENTORY, COGS, GOODS, SERVICES, SHIPPING, PAYROLL, TAX, BANK\_FEE, RENT, UTILITIES, SALES\_REVENUE, CUSTOMER\_REFUND, TRANSFER, OTHER. US GAAP does not define one universal code list; codes remain editable.
+* Financial Obligation: fob\_id, fob\_type (payable, receivable), fob\_source\_type, fob\_source\_id, fob\_label, fob\_due\_date, fob\_amount\_minor (positive integer), fob\_currency, fob\_status, fob\_counterparty, fob\_note, Users:usr\_id. Multiple payable rows support PO installments; one receivable row supports single-payment SO planning.
+* Bank Transaction: btx\_id, BankAccounts:bnk\_id, btx\_date, btx\_amount\_minor (signed integer; positive inflow, negative outflow), btx\_designation\_code, btx\_description, btx\_counterparty, btx\_external\_reference, FinancialObligations:fob\_id, btx\_reconciliation\_status, btx\_note, Users:usr\_id. Account balance is sum of transactions.
 
 
 
