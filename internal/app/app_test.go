@@ -3408,13 +3408,30 @@ func TestMCPGuestCannotInvokeWriteTools(t *testing.T) {
 		}
 	}
 
-	// Even when invoked directly by name, the underlying API enforcement must reject the call.
-	result := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolCreateRecord, map[string]any{
-		"table": "customers",
-		"values": map[string]any{
-			"cus_name_en": "Should Not Persist",
+	// Even when invoked directly by name, the server must reject the call.
+	resp := doMCP(t, client, ts.URL+"/mcp", loginResp.Token, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      4,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": mcpToolCreateRecord,
+			"arguments": map[string]any{
+				"table": "customers",
+				"values": map[string]any{
+					"cus_name_en": "Should Not Persist",
+				},
+			},
 		},
 	})
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if payload["error"] != nil {
+		return
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("guest create_record missing rejection: %+v", payload)
+	}
 	if result["isError"] != true {
 		t.Fatalf("guest create_record should be a tool error: %+v", result)
 	}
