@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"strings"
@@ -71,7 +71,7 @@ func (s *Server) authenticateCredentials(ctx context.Context, loginName, passwor
 
 func (s *Server) handleAPIAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var payload apiLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.UnmarshalRead(r.Body, &payload); err != nil {
 		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid JSON body"})
 		return
 	}

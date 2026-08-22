@@ -2,7 +2,17 @@ StockIt is a high-performance, self-contained (Asset Bundling) warehouse managem
 
 Initial technical specification is in the file StokIt_Specification.md. Update this spec as we move forward.
 
-This app code uses Go version 1.26 or newer. Use new Go features, do not care for compatibility with older Go versions.
+This app code uses Go version 1.27 or newer. Use new Go features, do not care for compatibility with older Go versions.
+Go 1.27+. Use new stdlib over external libs:
+- `encoding/json/v2` for all JSON. Case-sensitive, rejects duplicate members and trailing data, nil slice/map encode as `[]`/`{}`. Streaming = `json.MarshalWrite`/`json.UnmarshalRead`, not `NewEncoder`/`NewDecoder`.
+- `omitzero` for bool/number fields. v2 `omitempty` no longer drops `false`/`0`.
+- `uuid` (stdlib) for identifiers. `uuid.NewV7()` = unique + time-ordered. Not for secrets: session tokens stay `crypto/rand`. No use yet - all IDs are SQLite rowids; `github.com/google/uuid` stays in go.mod as an indirect dep of `mcp-go`.
+- Post-quantum TLS: HTTPS listener sets an explicit TLS 1.2 floor so older clients still connect. TLS 1.3 handshakes get Go's default `X25519MLKEM768` hybrid key exchange automatically - no extra config.
+
+Indirect deps stay pinned as-is when swapping them needs external rework.
+
+After feature change, ensure automated tests to cover new functionality.
+After feature change, ensure .md files to reflect new functionality. 
 
 Extra tools available to agents on Windows and Linux platforms: Powershell 7.6, ripgrep 15.0. When external test/tool scripts are required, use PowerShell for cross-system compatibility.
 

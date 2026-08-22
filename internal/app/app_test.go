@@ -3,7 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"flag"
 	"fmt"
 	"io"
@@ -2945,7 +2945,7 @@ func decodeJSON(t *testing.T, body io.ReadCloser, target any) {
 	t.Helper()
 	defer body.Close()
 
-	if err := json.NewDecoder(body).Decode(target); err != nil {
+	if err := json.UnmarshalRead(body, target); err != nil {
 		t.Fatalf("decode json: %v", err)
 	}
 }
@@ -4046,4 +4046,39 @@ func newCSVUploadRequest(t *testing.T, method, target, fileName, content string)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
+}
+
+func TestAPIRejectsMalformedJSONBodies(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newHTTPClient(t)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "duplicate member", body: `{"login_name":"admin","login_name":"admin","password":"admin"}`},
+		{name: "trailing data", body: `{"login_name":"admin","password":"admin"}{}`},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", strings.NewReader(testCase.body))
+			if err != nil {
+				t.Fatalf("new login request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("do login request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("login status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+			}
+		})
+	}
 }

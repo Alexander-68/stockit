@@ -2,6 +2,8 @@
 
 StockIt is a self-contained warehouse management app built in Go with a server-rendered UI using HTMX and bundled Tailwind CSS. It uses SQLite through `modernc.org/sqlite`, embeds its web assets, and starts with a prebuilt schema for warehouse master data, BOM management, and purchase-order tracking.
 
+Building StockIt requires the Go 1.27 or newer toolchain. The REST API and MCP surfaces encode and decode JSON with the standard library's `encoding/json/v2`, so request bodies are matched case-sensitively and duplicate object members or trailing data are rejected. The HTTPS listener accepts TLS 1.2 and newer; TLS 1.3 clients negotiate Go's default `X25519MLKEM768` post-quantum hybrid key exchange.
+
 The long-term direction is for StockIt to act mainly as a validated backend for external tools through REST API and MCP, while keeping the built-in web UI as a compact operator console.
 
 ## Implemented Initial MVP

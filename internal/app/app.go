@@ -2,8 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"html"
@@ -155,7 +156,7 @@ type apiResponse struct {
 	User    string           `json:"user,omitempty"`
 	Rows    []map[string]any `json:"rows,omitempty"`
 	Row     map[string]any   `json:"row,omitempty"`
-	HasMore bool             `json:"has_more,omitempty"`
+	HasMore bool             `json:"has_more,omitzero"`
 	Error   string           `json:"error,omitempty"`
 }
 
@@ -246,6 +247,9 @@ func (s *Server) Run(ctx context.Context) error {
 			Addr:              s.cfg.HTTPSAddr,
 			Handler:           s.handler,
 			ReadHeaderTimeout: 5 * time.Second,
+			// TLS 1.2 floor for older clients; TLS 1.3 handshakes get Go's default
+			// X25519MLKEM768 post-quantum hybrid key exchange.
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		}
 		specs = append(specs, listenerSpec{
 			server: httpsServer,
@@ -876,7 +880,7 @@ func (s *Server) handleAPITableWrite(w http.ResponseWriter, r *http.Request, cre
 	principal := principalFromContext(r.Context())
 
 	var payload map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.UnmarshalRead(r.Body, &payload); err != nil {
 		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid JSON body"})
 		return
 	}
@@ -1216,7 +1220,7 @@ func (s *Server) sendHTMXDeleteSuccess(w http.ResponseWriter, tableName, id, mes
 func (s *Server) writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	_ = json.MarshalWrite(w, payload)
 }
 
 func (s *Server) withSession(next http.HandlerFunc) http.Handler {

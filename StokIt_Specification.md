@@ -4,6 +4,16 @@ StockIt is a high-performance, self-contained (Asset Bundling) warehouse managem
 
 SQLite persistence (pure Go `modernc.org/sqlite`).
 
+Build toolchain: Go 1.27 or newer. Standard-library features are preferred over external dependencies:
+
+ - all REST API and MCP JSON is handled by `encoding/json/v2` (`json.MarshalWrite` / `json.UnmarshalRead`), which decodes case-sensitively and rejects duplicate object members and trailing data
+
+ - JSON struct fields that must be omitted when zero use the `omitzero` tag option, because `omitempty` in v2 no longer drops `false` or `0`
+
+ - the HTTPS listener sets an explicit TLS 1.2 minimum version so older clients still connect, while TLS 1.3 handshakes automatically use Go's default `X25519MLKEM768` post-quantum hybrid key exchange
+
+ - record identifiers remain SQLite rowids; the standard-library `uuid` package is available if externally visible identifiers are ever needed, but session tokens stay `crypto/rand`
+
 Data is stored as UTF-8.
 
 Primary product direction:
