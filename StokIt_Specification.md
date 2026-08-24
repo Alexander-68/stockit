@@ -21,6 +21,8 @@ Primary product direction:
  - StockIt should provide a basic built-in web UI for direct human data manipulation.
  - StockIt should primarily act as a validated backend data server through REST API and MCP so external smart tools can use it safely as their warehouse-data backend.
 
+Integration-document audience: coding agents building applications on StockIt. Use root `openapi.yaml` as REST contract and runtime table catalog/schema endpoints for machine-readable table metadata. This document defines product behavior and SQLite schema.
+
 Startup hardening for service runtimes: `TMPDIR` and `SQLITE\_TMPDIR` are forced to the resolved DB directory.
 
 Startup/runtime note:
@@ -176,28 +178,3 @@ Notes:
 * In web UI column names are shown "human friendly" without leading prefix: address\_en instead of cus\_address\_en.
 * for status fields: Draft, Under Review, Active, Inactive, Hold, Phase-Out, Obsolete.
 * root `openapi.yaml` is the maintained REST API contract.
-
-Reference seed dataset (`TestSeedReviewDataset`):
-
-* Purpose: build a realistic, cross-linked corpus that can be opened as a live
-  StockIt database for manual review (`go test ./internal/app -run TestSeedReviewDataset -v -args -stockit-keep-db`).
-* Row-count convention:
-  * **3 rows per top-level table** (customers, suppliers, locations, boms,
-    purchase\_orders, quotes, sales\_orders, manufacturing\_orders, invoices,
-    adjustments, stock\_moves). `users` matches this with the three
-    auto-seeded default accounts (`admin`, `user`, `guest`).
-  * **9 rows per subtable** (`bom_components`, `po_components`,
-    `quote_components`, `sales_order_components`, `mfo_components`,
-    `invoice_components`, `adjustment_components`) — 3 parents × 3 component
-    lines each.
-  * `stock_moves` keeps the count of 3 but uses the three structural variants
-    (receipt via PO, issue via SO, transfer via Adjustment) rather than three
-    uniform rows.
-  * `items` is top-level but seeded with 15 rows (3 finals, 9 parts, 3
-    assemblies). Parts are expanded to 9 so every subtable component line
-    (BOM, PO, Quote, Sales Order) can reference a unique part id without
-    collisions.
-* Rule of thumb when adding a new table: extend the seed using the same
-  convention (3 rows for a top-level table, 9 for a subtable) and add a
-  matching check row to the verification loop at the end of the test so the
-  new table is part of the generated review dataset.

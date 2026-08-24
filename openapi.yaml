@@ -3,9 +3,11 @@ info:
   title: StockIt REST API
   version: 1.0.0
   description: |
-    StockIt REST API for warehouse data access. The REST API and MCP tools are intentionally aligned:
-    table catalog/schema discovery, record list/get/create/update/delete, and shared session authentication.
-    MCP transport is documented in README.md and StokIt_Specification.md rather than OpenAPI.
+    Machine-readable integration contract for coding agents building warehouse applications on StockIt.
+    Discover accessible tables and their fields at runtime before using generic record operations.
+    The REST API and MCP tools are intentionally aligned: table catalog/schema discovery,
+    record list/get/create/update/delete, and shared session authentication. MCP transport is
+    documented in README.md and StokIt_Specification.md rather than OpenAPI.
 
     Cash-planning tables include bank_accounts, designation_codes, financial_obligations,
     and bank_transactions. Financial obligations represent expected payable or receivable

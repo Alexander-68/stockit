@@ -100,7 +100,6 @@ Cash planning:
   - `user`: manage non-user tables
   - `guest`: read-only access to non-user tables
 - Guard against deleting the last admin account.
-- Extensive integration and store tests covering login, roles, CSRF protection, HTTPS response behavior, API auth and schema discovery, MCP auth and tool execution, CRUD, CSV import, sorting, hidden password hashes, BOM, quote, purchase-order, and sales-order cascade behavior, schema migration for new columns, and parent/subtable flows.
 
 ## Notes
 
@@ -195,40 +194,6 @@ Notes:
 - The same flow works against the HTTPS listener (`https://127.0.0.1:8443/mcp`); with a self-signed certificate, set `NODE_TLS_REJECT_UNAUTHORIZED=0` in the environment before launching Claude Code, or use the plain HTTP listener for local development.
 - Remote hosts such as claude.ai cannot reach `127.0.0.1` directly and require a public HTTPS tunnel (e.g. `cloudflared tunnel --url http://127.0.0.1:8080`).
 
-## Test
-
-```powershell
-go test ./...
-```
-
-To keep populated test databases after the run for manual review:
-
-```powershell
-go test ./internal/app -run TestSeedReviewDataset -v -args -stockit-keep-db
-```
-
-This writes the review database to [`testdata/review-db/TestSeedReviewDataset.db`](/C:/Alex/StockIt/testdata/review-db/TestSeedReviewDataset.db).
-
-Optional custom output directory for kept databases:
-
-```powershell
-go test ./internal/app -run TestSeedReviewDataset -v -args -stockit-keep-db -stockit-db-dir .\testdata\review-db
-```
-
-To populate the exact database file that the app will open by default:
-
-```powershell
-go test ./internal/app -run TestSeedReviewDataset -v -args -stockit-keep-db -stockit-db-path .\data\stockit.db
-```
-
-When enabled, the tests log the database path and keep the SQLite `.db`, `-wal`, and `-shm` files instead of using an auto-cleaned temp directory.
-
-If you keep the review data in a non-default path, start the app with the same database path:
-
-```powershell
-go run ./cmd/stockit -db .\testdata\review-db\TestSeedReviewDataset.db
-```
-
 ## Project Layout
 
 - [`cmd/stockit/main.go`](/C:/Alex/StockIt/cmd/stockit/main.go): entry point
@@ -240,6 +205,7 @@ go run ./cmd/stockit -db .\testdata\review-db\TestSeedReviewDataset.db
 - [`internal/store/sqlite.go`](/C:/Alex/StockIt/internal/store/sqlite.go): SQLite initialization and data access
 - [`internal/store/metadata.go`](/C:/Alex/StockIt/internal/store/metadata.go): table metadata and permissions
 - [`openapi.yaml`](/C:/Alex/StockIt/openapi.yaml): REST API contract
+- [`TESTING.md`](/C:/Alex/StockIt/TESTING.md): test commands and review seed dataset
 - [`internal/web/templates`](/C:/Alex/StockIt/internal/web/templates): HTML templates
 - [`internal/web/assets`](/C:/Alex/StockIt/internal/web/assets): bundled frontend assets
 
