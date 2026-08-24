@@ -224,4 +224,3 @@ Notes:
 - [`internal/web/templates`](/C:/Alex/StockIt/internal/web/templates): HTML templates
 - [`internal/web/assets`](/C:/Alex/StockIt/internal/web/assets): bundled frontend assets
 
-If you are in doubt - ask me before proceed to change.
