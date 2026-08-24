@@ -7,6 +7,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestCashflowUsesServerSideStockItToken(t *testing.T) {
@@ -19,7 +20,7 @@ func TestCashflowUsesServerSideStockItToken(t *testing.T) {
 				http.Error(w, "bad login", http.StatusBadRequest)
 				return
 			}
-			writeJSON(w, http.StatusOK, stockitLoginResponse{Token: "stockit-token", User: "user", Role: "user"})
+			writeJSON(w, http.StatusOK, stockitLoginResponse{Token: "stockit-token", User: "user"})
 		case "/api/tables/bank_accounts":
 			if !requireBearer(t, w, r) {
 				return
@@ -36,6 +37,7 @@ func TestCashflowUsesServerSideStockItToken(t *testing.T) {
 			}
 			writeJSON(w, http.StatusOK, tableRowsResponse{Rows: []map[string]any{
 				{"fob_id": int64(41), "fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-08-10", "fob_amount_minor": int64(200), "fob_label": "Overdue rent", "fob_counterparty": "Landlord", "fob_source_type": "other"},
+				{"fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-08-24", "fob_amount_minor": int64(300)},
 				{"fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-09-01", "fob_amount_minor": int64(1000)},
 				{"fob_type": "receivable", "fob_status": "planned", "fob_currency": "USD", "fob_due_date": "2026-09-02", "fob_amount_minor": int64(500)},
 				{"fob_type": "payable", "fob_status": "paid", "fob_currency": "USD", "fob_due_date": "2026-09-03", "fob_amount_minor": int64(999)},
@@ -70,7 +72,7 @@ func TestCashflowUsesServerSideStockItToken(t *testing.T) {
 	if err := json.UnmarshalRead(loginResponse.Body, &loginBody); err != nil {
 		t.Fatal(err)
 	}
-	if loginBody["user"] != "user" || loginBody["role"] != "user" || loginBody["token"] != "" {
+	if loginBody["user"] != "user" || loginBody["token"] != "" {
 		t.Fatalf("unexpected login response: %+v", loginBody)
 	}
 
@@ -92,8 +94,77 @@ func TestCashflowUsesServerSideStockItToken(t *testing.T) {
 	if bodyResponse.AsOfDate != "2026-08-24" || bodyResponse.ForecastThrough != "2026-09-02" {
 		t.Fatalf("unexpected report dates: %+v", bodyResponse)
 	}
-	if len(bodyResponse.Forecast) != 3 || !bodyResponse.Forecast[0].Overdue || bodyResponse.Forecast[0].ProjectedBalanceMinor != 7300 || bodyResponse.Forecast[1].ProjectedBalanceMinor != 6300 || bodyResponse.Forecast[2].ProjectedBalanceMinor != 6800 || len(bodyResponse.Forecast[0].Details) != 1 || bodyResponse.Forecast[0].Details[0].Label != "Overdue rent" {
+	want := []forecastEntry{
+		{DueDate: "2026-08-24", Overdue: true, ProjectedBalanceMinor: 7300},
+		{DueDate: "2026-08-24", Overdue: false, ProjectedBalanceMinor: 7000},
+		{DueDate: "2026-09-01", Overdue: false, ProjectedBalanceMinor: 6000},
+		{DueDate: "2026-09-02", Overdue: false, ProjectedBalanceMinor: 6500},
+	}
+	if len(bodyResponse.Forecast) != len(want) {
 		t.Fatalf("unexpected forecast: %+v", bodyResponse.Forecast)
+	}
+	for i, entry := range want {
+		got := bodyResponse.Forecast[i]
+		if got.DueDate != entry.DueDate || got.Overdue != entry.Overdue || got.ProjectedBalanceMinor != entry.ProjectedBalanceMinor {
+			t.Fatalf("forecast[%d] = %+v, want %+v", i, got, entry)
+		}
+	}
+	if len(bodyResponse.Forecast[0].Details) != 1 || bodyResponse.Forecast[0].Details[0].Label != "Overdue rent" {
+		t.Fatalf("unexpected overdue details: %+v", bodyResponse.Forecast[0].Details)
+	}
+	if len(bodyResponse.Opening) != 1 || bodyResponse.Opening[0].Currency != "USD" || bodyResponse.Opening[0].OpeningMinor != 7500 || !bodyResponse.Opening[0].HasAccount {
+		t.Fatalf("unexpected opening balances: %+v", bodyResponse.Opening)
+	}
+}
+
+func TestReportDatesDefaultToCalendarDay(t *testing.T) {
+	today, err := time.Parse(dateLayout, time.Now().Format(dateLayout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	asOf, through, err := reportDates(httptest.NewRequest(http.MethodGet, "/api/cashflow", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !asOf.Equal(today) {
+		t.Fatalf("as_of = %v, want %v", asOf, today)
+	}
+	// An obligation due today is not yet overdue.
+	if today.Before(asOf) {
+		t.Fatal("obligation due on the as-of date is treated as overdue")
+	}
+	if !through.Equal(today.AddDate(0, 0, 90)) {
+		t.Fatalf("through = %v, want as_of+90d", through)
+	}
+	// Today is a valid forecast-through value when as_of defaults to today.
+	if _, _, err := reportDates(httptest.NewRequest(http.MethodGet, "/api/cashflow?through="+today.Format(dateLayout), nil)); err != nil {
+		t.Fatalf("through=today rejected: %v", err)
+	}
+}
+
+func TestListRowsPagesWithStableSort(t *testing.T) {
+	var sorts []string
+	stockit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sorts = append(sorts, r.URL.Query().Get("sort"))
+		if r.URL.Query().Get("offset") == "0" {
+			writeJSON(w, http.StatusOK, tableRowsResponse{Rows: []map[string]any{{"fob_id": int64(1)}, {"fob_id": int64(2)}}, HasMore: true})
+			return
+		}
+		writeJSON(w, http.StatusOK, tableRowsResponse{Rows: []map[string]any{{"fob_id": int64(3)}}})
+	}))
+	defer stockit.Close()
+
+	rows, status, err := newApp(stockit.URL, stockit.Client()).listRows(t.Context(), "financial_obligations", "fob_id", "token")
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("listRows: status=%d err=%v", status, err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v, want 3", rows)
+	}
+	for _, sort := range sorts {
+		if sort != "fob_id" {
+			t.Fatalf("sort = %q, want fob_id on every page", sort)
+		}
 	}
 }
 

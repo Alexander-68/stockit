@@ -29,7 +29,9 @@ const dateLayout = "2006-01-02"
 type app struct {
 	stockitURL string
 	client     *http.Client
-	mu         sync.Mutex
+	// secureCookies forces the Secure attribute when TLS terminates in front of this app.
+	secureCookies bool
+	mu            sync.Mutex
 	// ponytail: local sessions remain until logout or failed StockIt request; add TTL pruning for long-lived deployment.
 	sessions map[string]session
 }
@@ -37,7 +39,6 @@ type app struct {
 type session struct {
 	token string
 	user  string
-	role  string
 }
 
 type loginRequest struct {
@@ -48,7 +49,6 @@ type loginRequest struct {
 type stockitLoginResponse struct {
 	Token string `json:"token"`
 	User  string `json:"user"`
-	Role  string `json:"role"`
 }
 
 type tableRowsResponse struct {
@@ -85,24 +85,32 @@ type forecastEntry struct {
 	Details               []obligationDetail `json:"details"`
 }
 
+type currencyOpening struct {
+	Currency     string `json:"currency"`
+	OpeningMinor int64  `json:"opening_minor"`
+	HasAccount   bool   `json:"has_account"`
+}
+
 type cashflowResponse struct {
-	User            string           `json:"user"`
-	Role            string           `json:"role"`
-	AsOfDate        string           `json:"as_of_date"`
-	ForecastThrough string           `json:"forecast_through"`
-	Accounts        []accountSummary `json:"accounts"`
-	Forecast        []forecastEntry  `json:"forecast"`
+	User            string            `json:"user"`
+	AsOfDate        string            `json:"as_of_date"`
+	ForecastThrough string            `json:"forecast_through"`
+	Accounts        []accountSummary  `json:"accounts"`
+	Opening         []currencyOpening `json:"opening"`
+	Forecast        []forecastEntry   `json:"forecast"`
 }
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8090", "cashflow listen address")
 	stockitURL := flag.String("stockit-url", "http://127.0.0.1:8080", "StockIt base URL")
+	secureCookies := flag.Bool("secure-cookies", false, "always set Secure on the session cookie (use behind an HTTPS proxy)")
 	flag.Parse()
 
 	if _, err := url.ParseRequestURI(*stockitURL); err != nil {
 		log.Fatalf("invalid -stockit-url: %v", err)
 	}
 	app := newApp(*stockitURL, &http.Client{Timeout: 15 * time.Second})
+	app.secureCookies = *secureCookies
 	log.Printf("cashflow app listening on http://%s; StockIt=%s", *addr, app.stockitURL)
 	log.Fatal(http.ListenAndServe(*addr, app.handler()))
 }
@@ -124,7 +132,11 @@ func (a *app) handler() http.Handler {
 	return mux
 }
 
-func (a *app) handleIndex(w http.ResponseWriter, _ *http.Request) {
+func (a *app) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	html, err := files.ReadFile("index.html")
 	if err != nil {
 		http.Error(w, "load page", http.StatusInternalServerError)
@@ -135,6 +147,7 @@ func (a *app) handleIndex(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var credentials loginRequest
 	if err := json.UnmarshalRead(r.Body, &credentials); err != nil || strings.TrimSpace(credentials.LoginName) == "" || strings.TrimSpace(credentials.Password) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "login_name and password are required"})
@@ -174,10 +187,10 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
-	a.sessions[appToken] = session{token: login.Token, user: login.User, role: login.Role}
+	a.sessions[appToken] = session{token: login.Token, user: login.User}
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: appToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
-	writeJSON(w, http.StatusOK, map[string]string{"user": login.User, "role": login.Role})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: appToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.secureCookies || r.TLS != nil})
+	writeJSON(w, http.StatusOK, map[string]string{"user": login.User})
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +208,7 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 		delete(a.sessions, appToken)
 		a.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.secureCookies || r.TLS != nil, MaxAge: -1})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -211,11 +224,11 @@ func (a *app) handleCashflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accounts, status, err := a.listRows(r.Context(), "bank_accounts", current.token)
+	accounts, status, err := a.listRows(r.Context(), "bank_accounts", "bnk_id", current.token)
 	if err == nil {
-		transactions, transactionStatus, transactionErr := a.listRows(r.Context(), "bank_transactions", current.token)
+		transactions, transactionStatus, transactionErr := a.listRows(r.Context(), "bank_transactions", "btx_id", current.token)
 		if transactionErr == nil {
-			obligations, obligationStatus, obligationErr := a.listRows(r.Context(), "financial_obligations", current.token)
+			obligations, obligationStatus, obligationErr := a.listRows(r.Context(), "financial_obligations", "fob_id", current.token)
 			if obligationErr == nil {
 				writeJSON(w, http.StatusOK, buildCashflow(current, accounts, transactions, obligations, asOf, through))
 				return
@@ -236,7 +249,10 @@ func (a *app) handleCashflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func reportDates(r *http.Request) (time.Time, time.Time, error) {
-	asOf := time.Now().In(time.Local)
+	// Report dates are calendar dates: keep them at UTC midnight so they compare
+	// with time.Parse(dateLayout, ...) values from StockIt rows.
+	now := time.Now()
+	asOf := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	if raw := r.URL.Query().Get("as_of"); raw != "" {
 		parsed, err := time.Parse(dateLayout, raw)
 		if err != nil {
@@ -269,10 +285,12 @@ func (a *app) sessionFromRequest(r *http.Request) (string, session, bool) {
 	return cookie.Value, current, ok
 }
 
-func (a *app) listRows(ctx context.Context, table, token string) ([]map[string]any, int, error) {
+// listRows pages through a table sorted by its primary key so offset paging cannot
+// duplicate or skip rows the way StockIt's non-unique default sort can.
+func (a *app) listRows(ctx context.Context, table, primaryKey, token string) ([]map[string]any, int, error) {
 	var rows []map[string]any
 	for offset := 0; ; {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/tables/%s?limit=200&offset=%d", a.stockitURL, table, offset), nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/tables/%s?sort=%s&limit=200&offset=%d", a.stockitURL, table, primaryKey, offset), nil)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -326,7 +344,7 @@ func buildCashflow(current session, accountRows, transactionRows, obligationRows
 		}
 	}
 
-	result := cashflowResponse{User: current.user, Role: current.role, AsOfDate: asOf.Format(dateLayout), ForecastThrough: through.Format(dateLayout)}
+	result := cashflowResponse{User: current.user, AsOfDate: asOf.Format(dateLayout), ForecastThrough: through.Format(dateLayout)}
 	balances := make(map[string]int64)
 	for _, account := range accounts {
 		result.Accounts = append(result.Accounts, accountSummary{ID: account.id, Name: account.name, Currency: account.currency, BalanceMinor: account.balance})
@@ -403,6 +421,8 @@ func buildCashflow(current session, accountRows, transactionRows, obligationRows
 		currencies[currency] = true
 	}
 	for currency := range currencies {
+		_, hasAccount := balances[currency]
+		result.Opening = append(result.Opening, currencyOpening{Currency: currency, OpeningMinor: balances[currency], HasAccount: hasAccount})
 		dates := make([]string, 0, len(events[currency]))
 		for key := range events[currency] {
 			dates = append(dates, key)
@@ -416,11 +436,16 @@ func buildCashflow(current session, accountRows, transactionRows, obligationRows
 			result.Forecast = append(result.Forecast, forecastEntry{Currency: currency, DueDate: event.date, Overdue: event.overdue, PayableMinor: event.payable, ReceivableMinor: event.receivable, NetMinor: net, ProjectedBalanceMinor: projected, Details: event.details})
 		}
 	}
+	sort.Slice(result.Opening, func(i, j int) bool { return result.Opening[i].Currency < result.Opening[j].Currency })
 	sort.Slice(result.Forecast, func(i, j int) bool {
-		if result.Forecast[i].Currency == result.Forecast[j].Currency {
+		if result.Forecast[i].Currency != result.Forecast[j].Currency {
+			return result.Forecast[i].Currency < result.Forecast[j].Currency
+		}
+		if result.Forecast[i].DueDate != result.Forecast[j].DueDate {
 			return result.Forecast[i].DueDate < result.Forecast[j].DueDate
 		}
-		return result.Forecast[i].Currency < result.Forecast[j].Currency
+		// Overdue bucket carries the earlier projected balance on the as-of date.
+		return result.Forecast[i].Overdue && !result.Forecast[j].Overdue
 	})
 	return result
 }
