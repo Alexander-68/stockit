@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Purchasing</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f4f7fb; color: #172033; }
+    body { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+    header, section, form#login { background: #fff; border: 1px solid #dce3ee; border-radius: .75rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 4px 18px #1720330d; }
+    header { display: flex; justify-content: space-between; align-items: center; } h1, h2 { margin: 0 0 .75rem; } h1 { font-size: 1.5rem; margin: 0; } h2 { font-size: 1.1rem; }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .75rem; } .section-head h2 { margin: 0; }
+    label { display: block; font-weight: 600; margin-top: .75rem; }
+    input, select, textarea { box-sizing: border-box; width: 100%; margin-top: .25rem; padding: .55rem; border: 1px solid #9da9bc; border-radius: .4rem; font: inherit; background: #fff; }
+    td input, td select { margin-top: 0; padding: .35rem; }
+    button { border: 1px solid #155eef; border-radius: .4rem; padding: .55rem .9rem; background: transparent; color: #155eef; cursor: pointer; font-weight: 700; }
+    button.secondary { border-color: #475467; color: #475467; } button.danger { border-color: #b42318; color: #b42318; }
+    .controls { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; }
+    table { width: 100%; border-collapse: collapse; } th, td { padding: .5rem; border-bottom: 1px solid #e4e9f2; text-align: left; vertical-align: middle; }
+    th.num, td.num { text-align: right; }
+    .error { color: #b42318; min-height: 1.5rem; margin: .5rem 0 0; } .muted { color: #667085; } .hidden { display: none; }
+    #po-table tbody tr { cursor: pointer; } #po-table tbody tr:hover { background: #f0f4fb; }
+    #print-view { display: none; }
+    @media print {
+      body > * { display: none !important; }
+      body { max-width: none; padding: 0; background: #fff; }
+      #print-view { display: block !important; }
+      #print-view h1 { font-size: 1.4rem; margin: 0 0 .25rem; } #print-view h3 { margin: 1rem 0 .25rem; }
+      #print-view table { margin-top: .25rem; } #print-view th, #print-view td { border-bottom: 1px solid #999; }
+      .print-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2rem; margin: .75rem 0; }
+    }
+  </style>
+</head>
+<body>
+  <header><h1>Purchasing</h1><div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div></header>
+  <form id="login">
+    <h2>Sign in with StockIt</h2><p class="muted">Credentials go to this app backend, then StockIt. Bearer token stays on server.</p>
+    <label>Login name<input name="login_name" autocomplete="username" required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <p><button>Sign in</button></p><p id="login-error" class="error"></p>
+  </form>
+
+  <section id="list-view" class="hidden">
+    <div class="section-head"><h2>Purchase orders</h2><div class="controls"><button id="new-po">New purchase order</button><button id="reload" class="secondary" type="button">Refresh</button></div></div>
+    <p id="list-error" class="error"></p>
+    <div id="po-table"></div>
+  </section>
+
+  <main id="edit-view" class="hidden">
+    <section>
+      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="print" class="secondary hidden" type="button">Print / PDF</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
+      <form id="po-form">
+        <div class="grid">
+          <label>Doc number<input name="por_doc_number" required></label>
+          <label>Supplier<select name="sup_id" id="supplier-select"></select></label>
+          <label>Doc date<input name="por_doc_date" type="date"></label>
+          <label>Ship date<input name="por_ship_date" type="date"></label>
+          <label>Paid date<input name="por_paid_date" type="date"></label>
+          <label>Status<select name="por_status" id="status-select"></select></label>
+        </div>
+        <label>Note<textarea name="por_note" rows="2"></textarea></label>
+        <p><button>Save order</button></p>
+      </form>
+      <p id="edit-error" class="error"></p>
+    </section>
+
+    <section id="lines-section" class="hidden">
+      <div class="section-head"><h2>Order lines</h2></div>
+      <div id="lines"></div>
+      <form id="line-form">
+        <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th></th></tr></thead><tbody><tr>
+          <td><select name="itm_id" id="item-select"></select></td>
+          <td class="num"><input name="poc_qty" type="number" step="any" min="0" required></td>
+          <td class="num"><input name="poc_price" type="number" step="any" min="0"></td>
+          <td><select name="poc_currency" class="currency-select"></select></td>
+          <td><button>Add line</button></td>
+        </tr></tbody></table>
+      </form>
+      <p id="line-totals" class="muted"></p>
+      <p id="lines-error" class="error"></p>
+    </section>
+
+    <section id="schedule-section" class="hidden">
+      <div class="section-head"><h2>Payment schedule</h2><span class="muted">Payable obligations for this PO. Amounts are integer minor units.</span></div>
+      <div id="schedule"></div>
+      <form id="schedule-form">
+        <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody><tr>
+          <td><input name="fob_label" required></td>
+          <td><input name="fob_due_date" type="date" required></td>
+          <td class="num"><input name="fob_amount_minor" type="number" step="1" min="1" required></td>
+          <td><select name="fob_currency" class="currency-select"></select></td>
+          <td><select name="fob_status" class="obligation-status-select"></select></td>
+          <td><button>Add installment</button></td>
+        </tr></tbody></table>
+      </form>
+      <p id="schedule-totals" class="muted"></p>
+      <p id="schedule-error" class="error"></p>
+    </section>
+  </main>
+
+  <div id="print-view"></div>
+
+  <script>
+    const CURRENCIES = ['USD', 'TWD', 'CNY', 'EUR'];
+    const PO_STATUSES = ['issued', 'approved', 'sent', 'confirmed', 'paid', 'prepared', 'shipped', 'delivered', 'received', 'complete', 'inactive'];
+    const OBLIGATION_STATUSES = ['planned', 'due', 'paid', 'cancelled'];
+    const $ = selector => document.querySelector(selector);
+    const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const number = value => Number(value ?? 0).toLocaleString();
+    const options = (list, selected) => list.map(v => `<option value="${escape(v)}"${String(v) === String(selected) ? ' selected' : ''}>${escape(v)}</option>`).join('');
+
+    let suppliers = [], items = [], currentPO = null, lines = [], schedule = [];
+
+    async function api(method, path, body) {
+      const response = await fetch(path, { method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined });
+      if (response.status === 401) { showLogin(); throw new Error('Login required'); }
+      if (response.status === 204) return null;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      return data;
+    }
+
+    async function listAll(table, sort, extra = '') {
+      const rows = [];
+      for (let offset = 0; ;) {
+        const page = await api('GET', `/api/tables/${table}?sort=${sort}&limit=200&offset=${offset}${extra}`);
+        rows.push(...page.rows);
+        if (!page.has_more || !page.rows.length) return rows;
+        offset += page.rows.length;
+      }
+    }
+
+    const supplierName = id => { const s = suppliers.find(s => s.sup_id === id); return s ? (s.sup_name_en || s.sup_code || `#${id}`) : (id ? `#${id}` : ''); };
+    const itemName = id => { const i = items.find(i => i.itm_id === id); return i ? `${i.itm_sku || ''} ${i.itm_model || ''}`.trim() || `#${id}` : (id ? `#${id}` : ''); };
+
+    // --- views ---
+    function show(view) {
+      $('#login').classList.toggle('hidden', view !== 'login');
+      $('#list-view').classList.toggle('hidden', view !== 'list');
+      $('#edit-view').classList.toggle('hidden', view !== 'edit');
+      $('#identity').classList.toggle('hidden', view === 'login');
+    }
+    function showLogin() { $('#login').reset(); show('login'); }
+
+    async function showList() {
+      show('list');
+      $('#list-error').textContent = '';
+      try {
+        const orders = await listAll('purchase_orders', 'por_id&desc=true');
+        $('#po-table').innerHTML = orders.length ? `<table><thead><tr><th>Doc number</th><th>Supplier</th><th>Doc date</th><th>Ship date</th><th>Status</th></tr></thead><tbody>${
+          orders.map(po => `<tr data-id="${po.por_id}"><td>${escape(po.por_doc_number)}</td><td>${escape(supplierName(po.sup_id))}</td><td>${escape(po.por_doc_date)}</td><td>${escape(po.por_ship_date)}</td><td>${escape(po.por_status)}</td></tr>`).join('')
+        }</tbody></table>` : '<p class="muted">No purchase orders yet.</p>';
+      } catch (error) { $('#list-error').textContent = error.message; }
+    }
+
+    async function openPO(id) {
+      currentPO = null; lines = []; schedule = [];
+      $('#edit-error').textContent = ''; $('#lines-error').textContent = ''; $('#schedule-error').textContent = '';
+      if (id != null) {
+        try {
+          const record = await api('GET', `/api/tables/purchase_orders/${id}`);
+          currentPO = record.row;
+        } catch (error) { $('#list-error').textContent = error.message; return; }
+      }
+      const po = currentPO || {};
+      const form = $('#po-form');
+      form.por_doc_number.value = po.por_doc_number || '';
+      $('#supplier-select').innerHTML = '<option value="">—</option>' + suppliers.map(s => `<option value="${s.sup_id}"${s.sup_id === po.sup_id ? ' selected' : ''}>${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
+      form.por_doc_date.value = po.por_doc_date || (id == null ? new Date().toISOString().slice(0, 10) : '');
+      form.por_ship_date.value = po.por_ship_date || '';
+      form.por_paid_date.value = po.por_paid_date || '';
+      $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'issued');
+      form.por_note.value = po.por_note || '';
+      $('#edit-title').textContent = currentPO ? `Purchase order ${currentPO.por_doc_number}` : 'New purchase order';
+      $('#delete-po').classList.toggle('hidden', !currentPO);
+      $('#print').classList.toggle('hidden', !currentPO);
+      $('#lines-section').classList.toggle('hidden', !currentPO);
+      $('#schedule-section').classList.toggle('hidden', !currentPO);
+      show('edit');
+      if (currentPO) await Promise.all([loadLines(), loadSchedule()]);
+    }
+
+    function formPayload(form, fields) {
+      const payload = {};
+      for (const field of fields) payload[field] = form[field].value === '' ? null : form[field].value;
+      return payload;
+    }
+
+    // --- order lines ---
+    async function loadLines() {
+      lines = await listAll('po_components', 'poc_id', `&parent_id=${currentPO.por_id}`);
+      renderLines();
+    }
+    function renderLines() {
+      $('#lines').innerHTML = lines.length ? `<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th><th></th></tr></thead><tbody>${
+        lines.map((line, index) => `<tr>
+          <td>${escape(itemName(line.itm_id))}</td>
+          <td class="num"><input data-index="${index}" data-field="poc_qty" type="number" step="any" value="${line.poc_qty ?? ''}"></td>
+          <td class="num"><input data-index="${index}" data-field="poc_price" type="number" step="any" value="${line.poc_price ?? ''}"></td>
+          <td><select data-index="${index}" data-field="poc_currency">${options(CURRENCIES, line.poc_currency)}</select></td>
+          <td class="num">${number((line.poc_qty || 0) * (line.poc_price || 0))}</td>
+          <td><button class="secondary" data-save-line="${index}" type="button">Save</button> <button class="danger" data-delete-line="${index}" type="button">Delete</button></td>
+        </tr>`).join('')
+      }</tbody></table>` : '<p class="muted">No lines yet.</p>';
+      const totals = {};
+      for (const line of lines) if (line.poc_currency) totals[line.poc_currency] = (totals[line.poc_currency] || 0) + (line.poc_qty || 0) * (line.poc_price || 0);
+      $('#line-totals').textContent = Object.keys(totals).length ? 'Order totals: ' + Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency}`).join('; ') : '';
+    }
+    $('#lines').addEventListener('input', event => {
+      const { index, field } = event.target.dataset;
+      if (index != null) lines[index][field] = event.target.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value;
+    });
+    $('#lines').addEventListener('click', async event => {
+      const save = event.target.dataset.saveLine, remove = event.target.dataset.deleteLine;
+      $('#lines-error').textContent = '';
+      try {
+        if (save != null) {
+          const line = lines[save];
+          await api('PUT', `/api/tables/po_components/${line.poc_id}`, { itm_id: line.itm_id, poc_qty: line.poc_qty, poc_price: line.poc_price, poc_currency: line.poc_currency });
+          await loadLines();
+        } else if (remove != null) {
+          await api('DELETE', `/api/tables/po_components/${lines[remove].poc_id}`);
+          await loadLines();
+        }
+      } catch (error) { $('#lines-error').textContent = error.message; }
+    });
+    $('#line-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      $('#lines-error').textContent = '';
+      const form = event.target;
+      try {
+        await api('POST', '/api/tables/po_components', {
+          por_id: currentPO.por_id,
+          itm_id: Number(form.itm_id.value),
+          poc_qty: Number(form.poc_qty.value),
+          poc_price: form.poc_price.value === '' ? null : Number(form.poc_price.value),
+          poc_currency: form.poc_currency.value,
+        });
+        form.poc_qty.value = ''; form.poc_price.value = '';
+        await loadLines();
+      } catch (error) { $('#lines-error').textContent = error.message; }
+    });
+
+    // --- payment schedule (financial obligations) ---
+    async function loadSchedule() {
+      const all = await listAll('financial_obligations', 'fob_id');
+      schedule = all.filter(fob => fob.fob_source_type === 'purchase_order' && fob.fob_source_id === currentPO.por_id);
+      renderSchedule();
+    }
+    function renderSchedule() {
+      $('#schedule').innerHTML = schedule.length ? `<table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody>${
+        schedule.map((fob, index) => `<tr>
+          <td><input data-index="${index}" data-field="fob_label" value="${escape(fob.fob_label)}"></td>
+          <td><input data-index="${index}" data-field="fob_due_date" type="date" value="${escape(fob.fob_due_date)}"></td>
+          <td class="num"><input data-index="${index}" data-field="fob_amount_minor" type="number" step="1" value="${fob.fob_amount_minor ?? ''}"></td>
+          <td><select data-index="${index}" data-field="fob_currency">${options(CURRENCIES, fob.fob_currency)}</select></td>
+          <td><select data-index="${index}" data-field="fob_status">${options(OBLIGATION_STATUSES, fob.fob_status)}</select></td>
+          <td><button class="secondary" data-save-fob="${index}" type="button">Save</button> <button class="danger" data-delete-fob="${index}" type="button">Delete</button></td>
+        </tr>`).join('')
+      }</tbody></table>` : '<p class="muted">No installments yet.</p>';
+      const totals = {};
+      for (const fob of schedule) if (fob.fob_status !== 'cancelled') totals[fob.fob_currency] = (totals[fob.fob_currency] || 0) + (fob.fob_amount_minor || 0);
+      $('#schedule-totals').textContent = Object.keys(totals).length ? 'Scheduled (excluding cancelled): ' + Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency} minor`).join('; ') : '';
+    }
+    $('#schedule').addEventListener('input', event => {
+      const { index, field } = event.target.dataset;
+      if (index != null) schedule[index][field] = event.target.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value;
+    });
+    $('#schedule').addEventListener('click', async event => {
+      const save = event.target.dataset.saveFob, remove = event.target.dataset.deleteFob;
+      $('#schedule-error').textContent = '';
+      try {
+        if (save != null) {
+          const fob = schedule[save];
+          await api('PUT', `/api/tables/financial_obligations/${fob.fob_id}`, {
+            fob_type: 'payable', fob_source_type: 'purchase_order', fob_source_id: currentPO.por_id,
+            fob_label: fob.fob_label, fob_due_date: fob.fob_due_date, fob_amount_minor: fob.fob_amount_minor,
+            fob_currency: fob.fob_currency, fob_status: fob.fob_status, fob_counterparty: supplierName(currentPO.sup_id) || null,
+          });
+          await loadSchedule();
+        } else if (remove != null) {
+          await api('DELETE', `/api/tables/financial_obligations/${schedule[remove].fob_id}`);
+          await loadSchedule();
+        }
+      } catch (error) { $('#schedule-error').textContent = error.message; }
+    });
+    $('#schedule-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      $('#schedule-error').textContent = '';
+      const form = event.target;
+      try {
+        await api('POST', '/api/tables/financial_obligations', {
+          fob_type: 'payable', fob_source_type: 'purchase_order', fob_source_id: currentPO.por_id,
+          fob_label: form.fob_label.value, fob_due_date: form.fob_due_date.value,
+          fob_amount_minor: Number(form.fob_amount_minor.value), fob_currency: form.fob_currency.value,
+          fob_status: form.fob_status.value, fob_counterparty: supplierName(currentPO.sup_id) || null,
+        });
+        form.fob_label.value = ''; form.fob_due_date.value = ''; form.fob_amount_minor.value = '';
+        await loadSchedule();
+      } catch (error) { $('#schedule-error').textContent = error.message; }
+    });
+
+    // --- PO header save / delete ---
+    $('#po-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      $('#edit-error').textContent = '';
+      const payload = formPayload(event.target, ['por_doc_number', 'por_doc_date', 'por_ship_date', 'por_paid_date', 'por_status', 'por_note']);
+      payload.sup_id = event.target.sup_id.value === '' ? null : Number(event.target.sup_id.value);
+      try {
+        if (currentPO) {
+          await api('PUT', `/api/tables/purchase_orders/${currentPO.por_id}`, payload);
+          await openPO(currentPO.por_id);
+        } else {
+          const record = await api('POST', '/api/tables/purchase_orders', payload);
+          await openPO(record.row.por_id);
+        }
+      } catch (error) { $('#edit-error').textContent = error.message; }
+    });
+    $('#delete-po').addEventListener('click', async () => {
+      if (!currentPO || !confirm(`Delete PO ${currentPO.por_doc_number}? Its lines are deleted too. Payment schedule rows stay and must be removed by hand.`)) return;
+      $('#edit-error').textContent = '';
+      try { await api('DELETE', `/api/tables/purchase_orders/${currentPO.por_id}`); await showList(); }
+      catch (error) { $('#edit-error').textContent = error.message; }
+    });
+
+    // --- print ---
+    $('#print').addEventListener('click', () => {
+      const po = currentPO, supplier = suppliers.find(s => s.sup_id === po.sup_id);
+      const totals = {};
+      for (const line of lines) if (line.poc_currency) totals[line.poc_currency] = (totals[line.poc_currency] || 0) + (line.poc_qty || 0) * (line.poc_price || 0);
+      $('#print-view').innerHTML = `
+        <h1>Purchase Order ${escape(po.por_doc_number)}</h1>
+        <p class="muted">Status: ${escape(po.por_status)}</p>
+        <div class="print-meta">
+          <div><h3>Supplier</h3>${supplier ? `${escape(supplier.sup_name_en || '')}<br>${escape(supplier.sup_address_en || '')}<br>${escape(supplier.sup_contact_name || '')} ${escape(supplier.sup_contact_phone || '')}<br>${escape(supplier.sup_contact_email || '')}` : '<span class="muted">No supplier selected</span>'}</div>
+          <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '—')}<br>Ship date: ${escape(po.por_ship_date || '—')}<br>Paid date: ${escape(po.por_paid_date || '—')}</div>
+        </div>
+        <h3>Lines</h3>
+        <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th></tr></thead><tbody>
+          ${lines.map(line => `<tr><td>${escape(itemName(line.itm_id))}</td><td class="num">${number(line.poc_qty)}</td><td class="num">${number(line.poc_price)}</td><td>${escape(line.poc_currency)}</td><td class="num">${number((line.poc_qty || 0) * (line.poc_price || 0))}</td></tr>`).join('') || '<tr><td colspan="5">No lines</td></tr>'}
+        </tbody></table>
+        <p><strong>Totals:</strong> ${Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency}`).join('; ') || '—'}</p>
+        ${schedule.length ? `<h3>Payment schedule</h3>
+        <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor units)</th><th>Currency</th><th>Status</th></tr></thead><tbody>
+          ${schedule.map(fob => `<tr><td>${escape(fob.fob_label)}</td><td>${escape(fob.fob_due_date)}</td><td class="num">${number(fob.fob_amount_minor)}</td><td>${escape(fob.fob_currency)}</td><td>${escape(fob.fob_status)}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+        ${po.por_note ? `<h3>Note</h3><p>${escape(po.por_note)}</p>` : ''}`;
+      window.print();
+    });
+
+    // --- wiring ---
+    $('#po-table').addEventListener('click', event => { const row = event.target.closest('tr[data-id]'); if (row) openPO(Number(row.dataset.id)); });
+    $('#new-po').addEventListener('click', () => openPO(null));
+    $('#reload').addEventListener('click', showList);
+    $('#back').addEventListener('click', showList);
+    $('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
+    $('#login').addEventListener('submit', async event => {
+      event.preventDefault(); $('#login-error').textContent = '';
+      try {
+        const response = await fetch('/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
+        const data = await response.json();
+        if (!response.ok) { $('#login-error').textContent = data.error || 'Login failed'; return; }
+        event.target.reset();
+        $('#user').textContent = data.user;
+        await start();
+      } catch (error) { $('#login-error').textContent = error.message; }
+    });
+
+    async function start() {
+      [suppliers, items] = await Promise.all([listAll('suppliers', 'sup_id'), listAll('items', 'itm_id')]);
+      $('#item-select').innerHTML = items.map(i => `<option value="${i.itm_id}">${escape(itemName(i.itm_id))}</option>`).join('');
+      for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');
+      for (const select of document.querySelectorAll('.obligation-status-select')) select.innerHTML = options(OBLIGATION_STATUSES, 'planned');
+      await showList();
+    }
+    (async () => {
+      try { const me = await api('GET', '/api/me'); $('#user').textContent = me.user; await start(); }
+      catch { showLogin(); }
+    })();
+  </script>
+</body>
+</html>
