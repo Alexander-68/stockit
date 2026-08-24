@@ -6,7 +6,7 @@ Read [StockIt specification](../StokIt_Specification.md) and [REST API contract]
 
 Start with these independent apps:
 
-1. `cashflow` — read bank transactions and open financial obligations; show per-currency daily/weekly/monthly projected balance.
+1. [`cashflow`](cashflow/README.md) — read bank transactions and open financial obligations; show projected balance by currency and due date.
 2. `purchasing` — create/import purchase orders and their payable installment obligations. XLS parsing stays here.
 3. `sales` — create/import sales orders and estimated receivable obligations. PDF extraction stays here.
 4. `banking` — import bank CSV, create bank transactions, link them to obligations, flag unreconciled rows.

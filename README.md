@@ -220,6 +220,7 @@ Notes:
 - [`internal/store/metadata.go`](/C:/Alex/StockIt/internal/store/metadata.go): table metadata and permissions
 - [`openapi.yaml`](/C:/Alex/StockIt/openapi.yaml): REST API contract
 - [`TESTING.md`](/C:/Alex/StockIt/TESTING.md): test commands and review seed dataset
+- [`apps/cashflow`](/C:/Alex/StockIt/apps/cashflow): first external-app example
 - [`internal/web/templates`](/C:/Alex/StockIt/internal/web/templates): HTML templates
 - [`internal/web/assets`](/C:/Alex/StockIt/internal/web/assets): bundled frontend assets
 

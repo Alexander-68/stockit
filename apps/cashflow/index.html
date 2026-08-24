@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cashflow</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f4f7fb; color: #172033; }
+    body { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+    header, section, form { background: #fff; border: 1px solid #dce3ee; border-radius: .75rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 4px 18px #1720330d; }
+    header { display: flex; justify-content: space-between; align-items: center; } h1, h2 { margin: 0 0 .75rem; } h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; }
+    label { display: block; font-weight: 600; margin-top: .75rem; } input { box-sizing: border-box; width: 100%; margin-top: .25rem; padding: .65rem; border: 1px solid #9da9bc; border-radius: .4rem; }
+    button { border: 1px solid #155eef; border-radius: .4rem; padding: .65rem .9rem; background: transparent; color: #155eef; cursor: pointer; font-weight: 700; margin-top: 1rem; } button.secondary { border-color: #475467; color: #475467; margin-top: 0; } .controls button + button { margin-left: 1rem; }
+    table { width: 100%; border-collapse: collapse; } th, td { padding: .6rem; border-bottom: 1px solid #e4e9f2; text-align: right; } th:first-child, td:first-child { text-align: left; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; } .error { color: #b42318; min-height: 1.5rem; } .muted { color: #667085; } .hidden, .print-only { display: none; }
+    .tooltip-anchor { position: relative; } .tooltip { display: none; position: fixed; z-index: 1; min-width: 22rem; max-width: 34rem; padding: .75rem; border: 1px solid #9da9bc; border-radius: .5rem; background: #fff; box-shadow: 0 4px 18px #17203333; color: #172033; font-size: 1rem; font-weight: 400; line-height: 1.45; pointer-events: none; text-align: left; white-space: pre-line; }
+    @media print { body { max-width: none; padding: 0; background: white; } header, section { border: 0; box-shadow: none; padding: 0; } button, #login, #identity, .controls, .tooltip { display: none !important; } .print-only { display: block; } }
+  </style>
+</head>
+<body>
+  <header><h1>Cashflow</h1><div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div></header>
+  <form id="login">
+    <h2>Sign in with StockIt</h2><p class="muted">Credentials go to this app backend, then StockIt. Bearer token stays on server.</p>
+    <label>Login name<input name="login_name" autocomplete="username" required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Sign in</button><p id="login-error" class="error"></p>
+  </form>
+  <main id="dashboard" class="hidden">
+    <section><h2>Cashflow dates</h2><div class="controls"><label>As of date<input id="as-of" type="date"></label><label>Forecast through<input id="through" type="date"></label><button id="refresh" type="button">Refresh</button><button id="print" class="secondary" type="button">Print</button></div><p id="print-dates" class="print-only"></p></section>
+    <section><h2>Current bank balances</h2><p id="balance-note" class="muted">Amounts are StockIt integer minor units.</p><div id="accounts"></div></section>
+    <section><h2>Open obligations</h2><p id="forecast-note" class="muted">Paid and cancelled obligations are excluded.</p><div id="forecast"></div></section>
+  </main>
+  <script>
+    const login = document.querySelector('#login'), dashboard = document.querySelector('#dashboard'), identity = document.querySelector('#identity');
+    const number = value => Number(value).toLocaleString();
+    const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const cell = value => `<td>${escape(value)}</td>`;
+    function table(headers, rows) { return rows.length ? `<table><thead><tr>${headers.map(h => `<th>${escape(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>` : '<p class="muted">No rows.</p>'; }
+    let tooltip;
+    function hideTooltip() { if (tooltip) tooltip.style.display = 'none'; tooltip = undefined; }
+    document.querySelector('#forecast').addEventListener('mousemove', event => {
+      const next = event.target.closest('tr')?.querySelector('.tooltip');
+      if (!next) { hideTooltip(); return; }
+      if (tooltip !== next) { hideTooltip(); tooltip = next; tooltip.style.display = 'block'; }
+      const gap = 12, box = tooltip.getBoundingClientRect();
+      let left = event.clientX + gap, top = event.clientY + gap;
+      if (left + box.width > innerWidth - gap) left = event.clientX - box.width - gap;
+      if (top + box.height > innerHeight - gap) top = event.clientY - box.height - gap;
+      tooltip.style.left = `${Math.max(gap, left)}px`;
+      tooltip.style.top = `${Math.max(gap, top)}px`;
+    });
+    document.querySelector('#forecast').addEventListener('mouseleave', hideTooltip);
+    async function load() {
+      const query = new URLSearchParams();
+      if (document.querySelector('#as-of').value) query.set('as_of', document.querySelector('#as-of').value);
+      if (document.querySelector('#through').value) query.set('through', document.querySelector('#through').value);
+      const response = await fetch(`/api/cashflow?${query}`);
+      if (response.status === 401) { showLogin(); return; }
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load cashflow');
+      document.querySelector('#user').textContent = data.user;
+      document.querySelector('#as-of').value = data.as_of_date;
+      document.querySelector('#through').value = data.forecast_through;
+      document.querySelector('#print-dates').textContent = `As of ${data.as_of_date}; forecast through ${data.forecast_through}.`;
+      document.querySelector('#balance-note').textContent = `Balances as of ${data.as_of_date}; future-dated transactions are excluded. Amounts are StockIt integer minor units.`;
+      document.querySelector('#forecast-note').textContent = `Forecast from ${data.as_of_date} through ${data.forecast_through}. Overdue obligations are grouped at as-of date; paid and cancelled obligations are excluded.`;
+      document.querySelector('#accounts').innerHTML = table(['Account', 'Currency', 'Balance (minor)'], data.accounts.map(a => `<tr>${cell(a.name)}${cell(a.currency)}${cell(number(a.balance_minor))}</tr>`));
+      document.querySelector('#forecast').innerHTML = table(['Currency', 'Date', 'Payables', 'Receivables', 'Net', 'Projected balance'], data.forecast.map(f => {
+        const details = (f.details || []).map(d => `${d.type} ${number(d.amount_minor)} ${f.currency}\n${d.label || 'Unlabelled'}\nDue: ${d.due_date}; status: ${d.status}; source: ${d.source_type}${d.counterparty ? `; counterparty: ${d.counterparty}` : ''}`).join('\n\n');
+        return `<tr><td class="tooltip-anchor">${escape(f.currency)}<span class="tooltip" role="tooltip">${escape(details)}</span></td>${cell(f.overdue ? `Overdue as of ${f.due_date}` : f.due_date)}${cell(number(f.payable_minor))}${cell(number(f.receivable_minor))}${cell(number(f.net_minor))}${cell(number(f.projected_balance_minor))}</tr>`;
+      }));
+      login.classList.add('hidden'); dashboard.classList.remove('hidden'); identity.classList.remove('hidden');
+    }
+    function showLogin() { login.reset(); document.querySelector('#login-error').textContent = ''; login.classList.remove('hidden'); dashboard.classList.add('hidden'); identity.classList.add('hidden'); }
+    login.addEventListener('submit', async event => {
+      event.preventDefault(); document.querySelector('#login-error').textContent = '';
+      const credentials = Object.fromEntries(new FormData(login));
+      login.reset();
+      const response = await fetch('/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(credentials) });
+      const data = await response.json();
+      if (!response.ok) { document.querySelector('#login-error').textContent = data.error || 'Login failed'; return; }
+      load().catch(error => document.querySelector('#login-error').textContent = error.message);
+    });
+    document.querySelector('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
+    document.querySelector('#refresh').addEventListener('click', () => load().catch(error => document.querySelector('#login-error').textContent = error.message));
+    document.querySelector('#print').addEventListener('click', () => window.print());
+    load().catch(() => showLogin());
+  </script>
+</body>
+</html>
