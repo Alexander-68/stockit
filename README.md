@@ -4,7 +4,7 @@ StockIt is a self-contained warehouse management app built in Go with a server-r
 
 Building StockIt requires the Go 1.27 or newer toolchain. The REST API and MCP surfaces encode and decode JSON with the standard library's `encoding/json/v2`, so request bodies are matched case-sensitively and duplicate object members or trailing data are rejected. The HTTPS listener accepts TLS 1.2 and newer; TLS 1.3 clients negotiate Go's default `X25519MLKEM768` post-quantum hybrid key exchange.
 
-The long-term direction is for StockIt to act mainly as a validated backend for external tools through REST API and MCP, while keeping the built-in web UI as a compact operator console.
+StockIt is a secure system of record for external web apps and smart tools through REST API and MCP. The built-in web UI is intentionally limited to compact generic CRUD; workflow-specific UI and higher-level operations belong in external applications.
 
 ## Implemented Initial MVP
 
@@ -68,12 +68,12 @@ The long-term direction is for StockIt to act mainly as a validated backend for 
   - `stockit_import_csv`
 - Root `openapi.yaml` maintained as the REST API contract.
 
-Cash planning:
+Cash-planning base data:
 
-- Purchase-order installments are separate `financial_obligations` rows (`prepay`, `first part`, `second part`, `final`).
-- Sales orders use one receivable obligation for estimated payment date.
+- External workflows can create separate payable obligations for PO installments (`prepay`, `first part`, `second part`, `final`) and receivable obligations for estimated SO payments.
 - Money uses integer minor units plus currency; bank transaction amounts are signed (positive inflow, negative outflow).
 - Bank balances are derived from `bank_transactions`, not stored separately.
+- StockIt does not generate obligations from PO/SO, calculate forecasts, or provide recurring-budget workflows. External apps implement those higher-level operations through validated CRUD.
 - Embedded local assets:
   - HTMX
   - Tailwind CSS
@@ -164,6 +164,10 @@ Current MCP transport:
 - Requires StockIt authentication before `initialize` and subsequent MCP calls
 
 MCP tools are self-discoverable through `tools/list`, but they are still documented here and in the specification because human-facing docs are needed for auth flow, REST/MCP mapping, and expected operator workflows.
+
+### External web apps
+
+External apps may be a static `index.html` with any basic server, or a Python/Go/Node application. Deploy browser apps behind the same origin as StockIt and proxy `/api/` and `/mcp` to StockIt; then use relative API URLs and the session cookie. A different browser origin cannot call StockIt directly because StockIt does not enable CORS and rejects unsafe cross-origin writes. Do not embed bearer tokens in client-side JavaScript; use a same-origin session or an external-app backend that holds its bearer token.
 
 ### Connecting Claude Code to the StockIt MCP server
 

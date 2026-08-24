@@ -8,6 +8,8 @@ info:
     The REST API and MCP tools are intentionally aligned: table catalog/schema discovery,
     record list/get/create/update/delete, and shared session authentication. MCP transport is
     documented in README.md and StokIt_Specification.md rather than OpenAPI.
+    StockIt does not provide workflow-specific operations; client applications own higher-level
+    import, calculation, forecasting, consistency-check, and UI workflows.
 
     Cash-planning tables include bank_accounts, designation_codes, financial_obligations,
     and bank_transactions. Financial obligations represent expected payable or receivable
