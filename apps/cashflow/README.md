@@ -2,6 +2,9 @@
 
 Read-only external app for current bank balances and open payable/receivable obligations. It uses StockIt as central authentication and keeps StockIt bearer token only in its in-memory backend session.
 
+
+Version: `1.0.260825` (shown under the app title).
+
 ## Run locally
 
 Start StockIt first:

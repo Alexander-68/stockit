@@ -83,6 +83,7 @@ func newApp(stockitURL string, client *http.Client) *app {
 func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.handleIndex)
+	mux.HandleFunc("GET /assets/", a.handleAssets)
 	mux.HandleFunc("POST /login", a.handleLogin)
 	mux.HandleFunc("POST /logout", a.handleLogout)
 	mux.HandleFunc("GET /api/me", a.handleMe)
@@ -250,4 +251,26 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.MarshalWrite(w, value)
+}
+
+// handleAssets serves StockIt's public stylesheet through this origin so the
+// app's login page and chrome match StockIt without duplicating its CSS.
+func (a *app) handleAssets(w http.ResponseWriter, r *http.Request) {
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.stockitURL+r.URL.Path, nil)
+	if err != nil {
+		http.Error(w, "asset request", http.StatusInternalServerError)
+		return
+	}
+	response, err := a.client.Do(request)
+	if err != nil {
+		http.Error(w, "StockIt is unavailable", http.StatusBadGateway)
+		return
+	}
+	defer response.Body.Close()
+	if contentType := response.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.WriteHeader(response.StatusCode)
+	_, _ = io.Copy(w, response.Body)
 }

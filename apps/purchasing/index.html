@@ -4,23 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Purchasing</title>
+  <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="/assets/app/app.css">
   <style>
-    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f4f7fb; color: #172033; }
-    body { max-width: 1100px; margin: 0 auto; padding: 2rem; }
-    header, section, form#login { background: #fff; border: 1px solid #dce3ee; border-radius: .75rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 4px 18px #1720330d; }
+    :root { color-scheme: light; }
+    body { max-width: 1100px; margin: 0 auto; padding: 2rem; color: #172033; }
+    header, section { background: #fff; border: 1px solid #dce3ee; border-radius: .75rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 4px 18px #1720330d; }
     header { display: flex; justify-content: space-between; align-items: center; } h1, h2 { margin: 0 0 .75rem; } h1 { font-size: 1.5rem; margin: 0; } h2 { font-size: 1.1rem; }
+    .version { margin: .15rem 0 0; font-size: .72rem; letter-spacing: .12em; color: #667085; }
     .section-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .75rem; } .section-head h2 { margin: 0; }
     label { display: block; font-weight: 600; margin-top: .75rem; }
     input, select, textarea { box-sizing: border-box; width: 100%; margin-top: .25rem; padding: .55rem; border: 1px solid #9da9bc; border-radius: .4rem; font: inherit; background: #fff; }
-    td input, td select { margin-top: 0; padding: .35rem; }
+    td input, td select { margin-top: 0; padding: .35rem; min-height: 2.1rem; }
     button { border: 1px solid #155eef; border-radius: .4rem; padding: .55rem .9rem; background: transparent; color: #155eef; cursor: pointer; font-weight: 700; }
     button.secondary { border-color: #475467; color: #475467; } button.danger { border-color: #b42318; color: #b42318; }
-    .controls { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .controls { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; }
+    .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0 .75rem; margin-bottom: .5rem; }
+    .filters label { margin-top: .25rem; font-size: .8rem; }
     table { width: 100%; border-collapse: collapse; } th, td { padding: .5rem; border-bottom: 1px solid #e4e9f2; text-align: left; vertical-align: middle; }
     th.num, td.num { text-align: right; }
-    .error { color: #b42318; min-height: 1.5rem; margin: .5rem 0 0; } .muted { color: #667085; } .hidden { display: none; }
+    th[data-sort] { cursor: pointer; user-select: none; } th[data-sort]:hover { color: #155eef; }
+    .error { color: #b42318; margin: .5rem 0 0; } .muted { color: #667085; }
+    .hidden, .error:empty, .muted:empty { display: none; }
+    section > *:last-child, form > *:last-child { margin-bottom: 0; }
     #po-table tbody tr { cursor: pointer; } #po-table tbody tr:hover { background: #f0f4fb; }
+    #login-shell { display: flex; min-height: 60vh; align-items: center; } #login-shell.hidden { display: none; }
+    #login { width: min(28rem, 100%); margin: 0 auto; border-radius: 1.75rem; padding: 2rem; }
+    #login .login-head { display: block; background: none; border: 0; box-shadow: none; padding: 0; margin: 0 0 1.5rem; }
+    #login .login-head h1 { margin-top: .75rem; }
+    #login .stockit-input { width: 100%; display: block; margin-top: .5rem; }
+    #login .stockit-button { width: 100%; margin-top: 1.25rem; }
+    #login label { margin-top: 1rem; }
     #print-view { display: none; }
     @media print {
       body > * { display: none !important; }
@@ -32,24 +47,40 @@
     }
   </style>
 </head>
-<body>
-  <header><h1>Purchasing</h1><div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div></header>
-  <form id="login">
-    <h2>Sign in with StockIt</h2><p class="muted">Credentials go to this app backend, then StockIt. Bearer token stays on server.</p>
-    <label>Login name<input name="login_name" autocomplete="username" required></label>
-    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-    <p><button>Sign in</button></p><p id="login-error" class="error"></p>
-  </form>
+<body class="stockit-app-shell">
+  <header><div><h1>Purchasing</h1><p class="version" id="version"></p></div><div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div></header>
+
+  <div id="login-shell">
+    <form id="login" class="stockit-login-card">
+      <div class="login-head">
+        <p class="stockit-brand-mark">StockIt</p>
+        <h1>Purchasing</h1>
+        <p class="muted" style="margin:.5rem 0 0;font-size:.875rem">Credentials go to this app backend, then StockIt. Bearer token stays on server.</p>
+      </div>
+      <p id="login-error" class="stockit-inline-message stockit-inline-message-error hidden"></p>
+      <label class="stockit-field-label">Login<input class="stockit-input" name="login_name" autocomplete="username" required autofocus></label>
+      <label class="stockit-field-label">Password<input class="stockit-input" name="password" type="password" autocomplete="current-password" required></label>
+      <button class="stockit-button stockit-button-primary" type="submit">Sign In</button>
+    </form>
+  </div>
 
   <section id="list-view" class="hidden">
     <div class="section-head"><h2>Purchase orders</h2><div class="controls"><button id="new-po">New purchase order</button><button id="reload" class="secondary" type="button">Refresh</button></div></div>
+    <div class="filters">
+      <label>Doc date from<input id="filter-from" type="date"></label>
+      <label>Doc date to<input id="filter-to" type="date"></label>
+      <label>Supplier<select id="filter-supplier"></select></label>
+      <label>Status<select id="filter-status"></select></label>
+      <label>Search<input id="filter-search" type="search" placeholder="doc number or note"></label>
+    </div>
+    <div class="controls"><button id="filter-reset" class="secondary" type="button">Reset filters</button><span id="list-count" class="muted"></span></div>
     <p id="list-error" class="error"></p>
     <div id="po-table"></div>
   </section>
 
   <main id="edit-view" class="hidden">
     <section>
-      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="print" class="secondary hidden" type="button">Print / PDF</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
+      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="print" class="secondary hidden" type="button">Print</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
       <form id="po-form">
         <div class="grid">
           <label>Doc number<input name="por_doc_number" required></label>
@@ -60,13 +91,12 @@
           <label>Status<select name="por_status" id="status-select"></select></label>
         </div>
         <label>Note<textarea name="por_note" rows="2"></textarea></label>
-        <p><button>Save order</button></p>
+        <div class="controls" style="margin-top:.75rem"><button>Save order</button><span id="edit-error" class="error" style="margin:0"></span></div>
       </form>
-      <p id="edit-error" class="error"></p>
     </section>
 
     <section id="lines-section" class="hidden">
-      <div class="section-head"><h2>Order lines</h2></div>
+      <div class="section-head"><h2>Order lines</h2><span id="line-totals" class="muted"></span></div>
       <div id="lines"></div>
       <form id="line-form">
         <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th></th></tr></thead><tbody><tr>
@@ -77,12 +107,12 @@
           <td><button>Add line</button></td>
         </tr></tbody></table>
       </form>
-      <p id="line-totals" class="muted"></p>
       <p id="lines-error" class="error"></p>
     </section>
 
     <section id="schedule-section" class="hidden">
-      <div class="section-head"><h2>Payment schedule</h2><span class="muted">Payable obligations for this PO. Amounts are integer minor units.</span></div>
+      <div class="section-head"><h2>Payment schedule</h2><span id="schedule-totals" class="muted"></span></div>
+      <p class="muted">Payable obligations for this PO. Amounts are integer minor units.</p>
       <div id="schedule"></div>
       <form id="schedule-form">
         <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody><tr>
@@ -94,7 +124,6 @@
           <td><button>Add installment</button></td>
         </tr></tbody></table>
       </form>
-      <p id="schedule-totals" class="muted"></p>
       <p id="schedule-error" class="error"></p>
     </section>
   </main>
@@ -102,15 +131,21 @@
   <div id="print-view"></div>
 
   <script>
+    const VERSION = '1.0.260825';
     const CURRENCIES = ['USD', 'TWD', 'CNY', 'EUR'];
-    const PO_STATUSES = ['issued', 'approved', 'sent', 'confirmed', 'paid', 'prepared', 'shipped', 'delivered', 'received', 'complete', 'inactive'];
+    const PO_STATUSES = ['draft', 'issued', 'approved', 'sent', 'confirmed', 'paid', 'prepared', 'shipped', 'delivered', 'received', 'complete', 'inactive'];
     const OBLIGATION_STATUSES = ['planned', 'due', 'paid', 'cancelled'];
+    // ponytail: the StockIt list API has no server-side date/status filter, so the browser pulls
+    // this window and filters locally. Push filters into /api/tables when a site outgrows the cap.
+    const MAX_ROWS = 5000, DEFAULT_MONTHS = 12;
     const $ = selector => document.querySelector(selector);
     const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const number = value => Number(value ?? 0).toLocaleString();
     const options = (list, selected) => list.map(v => `<option value="${escape(v)}"${String(v) === String(selected) ? ' selected' : ''}>${escape(v)}</option>`).join('');
+    const isoDate = date => date.toISOString().slice(0, 10);
 
-    let suppliers = [], items = [], currentPO = null, lines = [], schedule = [];
+    let suppliers = [], items = [], orders = [], currentPO = null, lines = [], schedule = [];
+    let sort = { key: 'por_doc_date', desc: true };
 
     async function api(method, path, body) {
       const response = await fetch(path, { method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined });
@@ -121,14 +156,14 @@
       return data;
     }
 
-    async function listAll(table, sort, extra = '') {
+    async function listAll(table, sortSpec, extra = '', max = Infinity) {
       const rows = [];
-      for (let offset = 0; ;) {
-        const page = await api('GET', `/api/tables/${table}?sort=${sort}&limit=200&offset=${offset}${extra}`);
+      while (rows.length < max) {
+        const page = await api('GET', `/api/tables/${table}?sort=${sortSpec}&limit=200&offset=${rows.length}${extra}`);
         rows.push(...page.rows);
-        if (!page.has_more || !page.rows.length) return rows;
-        offset += page.rows.length;
+        if (!page.has_more || !page.rows.length) break;
       }
+      return rows;
     }
 
     const supplierName = id => { const s = suppliers.find(s => s.sup_id === id); return s ? (s.sup_name_en || s.sup_code || `#${id}`) : (id ? `#${id}` : ''); };
@@ -136,22 +171,66 @@
 
     // --- views ---
     function show(view) {
-      $('#login').classList.toggle('hidden', view !== 'login');
+      $('#login-shell').classList.toggle('hidden', view !== 'login');
       $('#list-view').classList.toggle('hidden', view !== 'list');
       $('#edit-view').classList.toggle('hidden', view !== 'edit');
       $('#identity').classList.toggle('hidden', view === 'login');
     }
-    function showLogin() { $('#login').reset(); show('login'); }
+    function showLogin() { $('#login').reset(); $('#login-error').classList.add('hidden'); show('login'); }
+
+    function defaultFrom() { const date = new Date(); date.setMonth(date.getMonth() - DEFAULT_MONTHS); return isoDate(date); }
+    function resetFilters() {
+      $('#filter-from').value = defaultFrom();
+      $('#filter-to').value = '';
+      $('#filter-supplier').value = '';
+      $('#filter-status').value = '';
+      $('#filter-search').value = '';
+      renderList();
+    }
 
     async function showList() {
       show('list');
       $('#list-error').textContent = '';
       try {
-        const orders = await listAll('purchase_orders', 'por_id&desc=true');
-        $('#po-table').innerHTML = orders.length ? `<table><thead><tr><th>Doc number</th><th>Supplier</th><th>Doc date</th><th>Ship date</th><th>Status</th></tr></thead><tbody>${
-          orders.map(po => `<tr data-id="${po.por_id}"><td>${escape(po.por_doc_number)}</td><td>${escape(supplierName(po.sup_id))}</td><td>${escape(po.por_doc_date)}</td><td>${escape(po.por_ship_date)}</td><td>${escape(po.por_status)}</td></tr>`).join('')
-        }</tbody></table>` : '<p class="muted">No purchase orders yet.</p>';
+        orders = await listAll('purchase_orders', 'por_doc_date&desc=true', '', MAX_ROWS);
+        renderList();
       } catch (error) { $('#list-error').textContent = error.message; }
+    }
+
+    const COLUMNS = [
+      { key: 'por_doc_number', label: 'Doc number', value: po => po.por_doc_number },
+      { key: 'supplier', label: 'Supplier', value: po => supplierName(po.sup_id) },
+      { key: 'por_doc_date', label: 'Doc date', value: po => po.por_doc_date },
+      { key: 'por_ship_date', label: 'Ship date', value: po => po.por_ship_date },
+      { key: 'por_paid_date', label: 'Paid date', value: po => po.por_paid_date },
+      { key: 'por_status', label: 'Status', value: po => po.por_status },
+    ];
+
+    function filteredOrders() {
+      const from = $('#filter-from').value, to = $('#filter-to').value;
+      const supplier = $('#filter-supplier').value, status = $('#filter-status').value;
+      const search = $('#filter-search').value.trim().toLowerCase();
+      return orders.filter(po => {
+        const date = po.por_doc_date || '';
+        if (from && (!date || date < from)) return false;
+        if (to && (!date || date > to)) return false;
+        if (supplier && String(po.sup_id) !== supplier) return false;
+        if (status && po.por_status !== status) return false;
+        if (search && !`${po.por_doc_number || ''} ${po.por_note || ''}`.toLowerCase().includes(search)) return false;
+        return true;
+      });
+    }
+
+    function renderList() {
+      const rows = filteredOrders();
+      const column = COLUMNS.find(c => c.key === sort.key) || COLUMNS[2];
+      rows.sort((a, b) => String(column.value(a) ?? '').localeCompare(String(column.value(b) ?? ''), undefined, { numeric: true }) * (sort.desc ? -1 : 1));
+      $('#list-count').textContent = `${rows.length} shown of ${orders.length} loaded${orders.length >= MAX_ROWS ? ` (load capped at ${MAX_ROWS} rows)` : ''}`;
+      $('#po-table').innerHTML = rows.length ? `<table><thead><tr>${
+        COLUMNS.map(c => `<th data-sort="${c.key}">${escape(c.label)}${sort.key === c.key ? (sort.desc ? ' &#9660;' : ' &#9650;') : ''}</th>`).join('')
+      }</tr></thead><tbody>${
+        rows.map(po => `<tr data-id="${po.por_id}">${COLUMNS.map(c => `<td>${escape(c.value(po))}</td>`).join('')}</tr>`).join('')
+      }</tbody></table>` : '<p class="muted">No purchase orders match these filters.</p>';
     }
 
     async function openPO(id) {
@@ -166,11 +245,11 @@
       const po = currentPO || {};
       const form = $('#po-form');
       form.por_doc_number.value = po.por_doc_number || '';
-      $('#supplier-select').innerHTML = '<option value="">—</option>' + suppliers.map(s => `<option value="${s.sup_id}"${s.sup_id === po.sup_id ? ' selected' : ''}>${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
-      form.por_doc_date.value = po.por_doc_date || (id == null ? new Date().toISOString().slice(0, 10) : '');
+      $('#supplier-select').innerHTML = '<option value="">&mdash;</option>' + suppliers.map(s => `<option value="${s.sup_id}"${s.sup_id === po.sup_id ? ' selected' : ''}>${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
+      form.por_doc_date.value = po.por_doc_date || (id == null ? isoDate(new Date()) : '');
       form.por_ship_date.value = po.por_ship_date || '';
       form.por_paid_date.value = po.por_paid_date || '';
-      $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'issued');
+      $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'draft');
       form.por_note.value = po.por_note || '';
       $('#edit-title').textContent = currentPO ? `Purchase order ${currentPO.por_doc_number}` : 'New purchase order';
       $('#delete-po').classList.toggle('hidden', !currentPO);
@@ -334,13 +413,13 @@
         <p class="muted">Status: ${escape(po.por_status)}</p>
         <div class="print-meta">
           <div><h3>Supplier</h3>${supplier ? `${escape(supplier.sup_name_en || '')}<br>${escape(supplier.sup_address_en || '')}<br>${escape(supplier.sup_contact_name || '')} ${escape(supplier.sup_contact_phone || '')}<br>${escape(supplier.sup_contact_email || '')}` : '<span class="muted">No supplier selected</span>'}</div>
-          <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '—')}<br>Ship date: ${escape(po.por_ship_date || '—')}<br>Paid date: ${escape(po.por_paid_date || '—')}</div>
+          <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '-')}<br>Ship date: ${escape(po.por_ship_date || '-')}<br>Paid date: ${escape(po.por_paid_date || '-')}</div>
         </div>
         <h3>Lines</h3>
         <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th></tr></thead><tbody>
           ${lines.map(line => `<tr><td>${escape(itemName(line.itm_id))}</td><td class="num">${number(line.poc_qty)}</td><td class="num">${number(line.poc_price)}</td><td>${escape(line.poc_currency)}</td><td class="num">${number((line.poc_qty || 0) * (line.poc_price || 0))}</td></tr>`).join('') || '<tr><td colspan="5">No lines</td></tr>'}
         </tbody></table>
-        <p><strong>Totals:</strong> ${Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency}`).join('; ') || '—'}</p>
+        <p><strong>Totals:</strong> ${Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency}`).join('; ') || '-'}</p>
         ${schedule.length ? `<h3>Payment schedule</h3>
         <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor units)</th><th>Currency</th><th>Status</th></tr></thead><tbody>
           ${schedule.map(fob => `<tr><td>${escape(fob.fob_label)}</td><td>${escape(fob.fob_due_date)}</td><td class="num">${number(fob.fob_amount_minor)}</td><td>${escape(fob.fob_currency)}</td><td>${escape(fob.fob_status)}</td></tr>`).join('')}
@@ -350,26 +429,39 @@
     });
 
     // --- wiring ---
-    $('#po-table').addEventListener('click', event => { const row = event.target.closest('tr[data-id]'); if (row) openPO(Number(row.dataset.id)); });
+    $('#version').textContent = VERSION;
+    $('#po-table').addEventListener('click', event => {
+      const header = event.target.closest('th[data-sort]');
+      if (header) { const key = header.dataset.sort; sort = { key, desc: sort.key === key ? !sort.desc : false }; renderList(); return; }
+      const row = event.target.closest('tr[data-id]');
+      if (row) openPO(Number(row.dataset.id));
+    });
+    for (const id of ['#filter-from', '#filter-to', '#filter-supplier', '#filter-status', '#filter-search']) $(id).addEventListener('input', renderList);
+    $('#filter-reset').addEventListener('click', resetFilters);
     $('#new-po').addEventListener('click', () => openPO(null));
     $('#reload').addEventListener('click', showList);
     $('#back').addEventListener('click', showList);
     $('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
     $('#login').addEventListener('submit', async event => {
-      event.preventDefault(); $('#login-error').textContent = '';
+      event.preventDefault();
+      const error = $('#login-error');
+      error.textContent = ''; error.classList.add('hidden');
       try {
         const response = await fetch('/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
         const data = await response.json();
-        if (!response.ok) { $('#login-error').textContent = data.error || 'Login failed'; return; }
+        if (!response.ok) { error.textContent = data.error || 'Login failed'; error.classList.remove('hidden'); return; }
         event.target.reset();
         $('#user').textContent = data.user;
         await start();
-      } catch (error) { $('#login-error').textContent = error.message; }
+      } catch (failure) { error.textContent = failure.message; error.classList.remove('hidden'); }
     });
 
     async function start() {
       [suppliers, items] = await Promise.all([listAll('suppliers', 'sup_id'), listAll('items', 'itm_id')]);
       $('#item-select').innerHTML = items.map(i => `<option value="${i.itm_id}">${escape(itemName(i.itm_id))}</option>`).join('');
+      $('#filter-supplier').innerHTML = '<option value="">All suppliers</option>' + suppliers.map(s => `<option value="${s.sup_id}">${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
+      $('#filter-status').innerHTML = '<option value="">All statuses</option>' + options(PO_STATUSES);
+      $('#filter-from').value = defaultFrom();
       for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');
       for (const select of document.querySelectorAll('.obligation-status-select')) select.innerHTML = options(OBLIGATION_STATUSES, 'planned');
       await showList();

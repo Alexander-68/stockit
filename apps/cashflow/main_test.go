@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,4 +178,37 @@ func requireBearer(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// TestAssetsProxyIsPublic keeps the shared StockIt stylesheet reachable before login so the
+// app's sign-in page renders with StockIt's own look.
+func TestAssetsProxyIsPublic(t *testing.T) {
+	stockit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/assets/") {
+			t.Errorf("unexpected StockIt request %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = w.Write([]byte(".stockit-login-card{}"))
+	}))
+	defer stockit.Close()
+	appServer := httptest.NewServer(newApp(stockit.URL, stockit.Client()).handler())
+	defer appServer.Close()
+
+	response, err := http.Get(appServer.URL + "/assets/app/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("assets proxy returned %d, want 200", response.StatusCode)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "stockit-login-card") {
+		t.Fatalf("assets proxy did not forward StockIt CSS: %s", body)
+	}
 }

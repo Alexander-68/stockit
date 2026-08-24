@@ -11,6 +11,11 @@ Start with these independent apps:
 3. `sales` — create/import sales orders and estimated receivable obligations. PDF extraction stays here.
 4. `banking` — import bank CSV, create bank transactions, link them to obligations, flag unreconciled rows.
 
+## App conventions
+
+- Version string is `1.0.YYMMDD` (release date). Bump it on every code change and show it under the app title in the header.
+- Sign-in page reuses StockIt's own look: each app proxies `GET /assets/` to StockIt and links `/assets/app/app.css`, so the login card, inputs and buttons stay in sync with StockIt's design tokens.
+
 Do not share browser bearer tokens. Deploy static browser apps behind same-origin `/api/` and `/mcp` proxy, or keep bearer tokens in app backend.
 
 For separate trusted-LAN app servers, use StockIt API login as central authentication: backend exchanges user credentials for bearer token over HTTPS, retains token only in server-side app session, and forwards it on API calls. This preserves StockIt user attribution. See root README for full trial-flow limits.

@@ -40,6 +40,11 @@ func newFakeStockIt(t *testing.T) *httptest.Server {
 			writeJSON(w, http.StatusOK, stockitLoginResponse{Token: "stockit-token", User: "user"})
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			_, _ = w.Write([]byte(".stockit-login-card{}"))
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer stockit-token" {
 			t.Errorf("missing bearer token on %s %s", r.Method, r.URL.Path)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no token"})
@@ -134,5 +139,30 @@ func TestProxyRejectsUnlistedTablesMethodsAndAnonymous(t *testing.T) {
 	_ = anonymous.Body.Close()
 	if anonymous.StatusCode != http.StatusUnauthorized {
 		t.Errorf("anonymous proxy request returned %d, want 401", anonymous.StatusCode)
+	}
+}
+
+// TestAssetsProxyIsPublic keeps the shared StockIt stylesheet reachable before login so the
+// app's sign-in page renders with StockIt's own look.
+func TestAssetsProxyIsPublic(t *testing.T) {
+	stockit := newFakeStockIt(t)
+	defer stockit.Close()
+	appServer := httptest.NewServer(newApp(stockit.URL, stockit.Client()).handler())
+	defer appServer.Close()
+
+	response, err := http.Get(appServer.URL + "/assets/app/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("assets proxy returned %d, want 200", response.StatusCode)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "stockit-login-card") {
+		t.Fatalf("assets proxy did not forward StockIt CSS: %s", body)
 	}
 }
