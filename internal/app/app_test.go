@@ -142,6 +142,29 @@ func TestAPIAuthLoginAndTableCatalog(t *testing.T) {
 	}
 }
 
+func TestAPIAuthLoginPreservesExternalAppUserIdentity(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	loginResp := apiLogin(t, client, ts.URL, "user", "user")
+	customerID := createRecord(t, client, loginResp.Token, ts.URL, "customers", map[string]any{
+		"cus_name_en": "External App Customer",
+		"cus_status":  "Active",
+		"usr_id":      1,
+	})
+
+	resp := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/customers/"+customerID, loginResp.Token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("created customer status = %d, want 200", resp.StatusCode)
+	}
+	var payload apiResponse
+	decodeJSON(t, resp.Body, &payload)
+	if fmt.Sprint(payload.Row["usr_id"]) != "2" {
+		t.Fatalf("created customer usr_id = %v, want 2", payload.Row["usr_id"])
+	}
+}
+
 func TestAPIRejectsUnknownFieldsAndInvalidIDs(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()

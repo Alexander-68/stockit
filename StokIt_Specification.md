@@ -45,7 +45,7 @@ Browser login/session notes:
 
 &#x20; - sessions expire after 15 minutes of inactivity
 
-&#x20; - at most 5 sessions are active globally; additional login attempts are rejected until one expires or logs out
+&#x20; - at most 5 sessions are active per user; additional login attempts for that user are rejected until one expires or logs out
 
 &#x20; - sessions are stored only in process memory, so all sessions are cleared on restart
 
@@ -80,6 +80,8 @@ REST API and MCP rules:
 Unsafe cross-origin browser requests to Web/API write endpoints are rejected with `403 Forbidden`.
 
 Browser-based external apps must use StockIt through same-origin deployment with a reverse proxy for `/api/` and `/mcp`, or use an external-app backend that presents `Authorization: Bearer` to StockIt. StockIt does not provide CORS for direct cross-origin browser API calls. Bearer tokens must not be embedded in client-side JavaScript.
+
+For separate trusted-LAN app servers, StockIt is central user authentication: app backend submits the user's credentials to `POST /api/auth/login`, retains returned bearer token only in its server-side session, and forwards it on StockIt calls. StockIt applies that user's role and creator-managed `usr_id`. App backend must use HTTPS, keep credentials/tokens out of logs and persistent storage, call `POST /api/auth/logout` on logout, and make user reauthentication handle StockIt's session idle expiry and process restart. Delegated SSO and app-specific permissions are future hardening.
 
 Built-in user/role model with scoped access: admin, user, guest with passwords are stored as Argon2id.
 

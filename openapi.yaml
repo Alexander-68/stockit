@@ -33,7 +33,12 @@ paths:
   /api/auth/login:
     post:
       tags: [Auth]
-      summary: Create a session and return a bearer token
+      summary: Authenticate a StockIt user and return a bearer token
+      description: |
+        For trusted external app backends, submit the user's credentials server-to-server over HTTPS.
+        Keep the returned token only in the backend session, then use it in Authorization: Bearer
+        requests so StockIt preserves the authenticated user's role and record attribution. Do not
+        expose or persist the token in browser code. This trial flow is not delegated SSO.
       security: []
       requestBody:
         required: true

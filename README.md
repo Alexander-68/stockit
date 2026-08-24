@@ -40,7 +40,7 @@ StockIt is a secure system of record for external web apps and smart tools throu
 - Argon2id password hashing for stored credentials.
 - In-memory opaque session management with:
   - 15 minute idle expiry
-  - maximum 5 active sessions globally
+  - maximum 5 active sessions per user
   - cookie and `Authorization: Bearer` token support
 - Dual HTTP + HTTPS serving for the web UI, REST API, and MCP endpoint.
 - Startup generation of a self-signed TLS certificate and key when the configured files do not exist.
@@ -168,6 +168,16 @@ MCP tools are self-discoverable through `tools/list`, but they are still documen
 ### External web apps
 
 External apps may be a static `index.html` with any basic server, or a Python/Go/Node application. Deploy browser apps behind the same origin as StockIt and proxy `/api/` and `/mcp` to StockIt; then use relative API URLs and the session cookie. A different browser origin cannot call StockIt directly because StockIt does not enable CORS and rejects unsafe cross-origin writes. Do not embed bearer tokens in client-side JavaScript; use a same-origin session or an external-app backend that holds its bearer token.
+
+For separate app servers during LAN trials, use StockIt as central user authentication:
+
+1. Browser submits credentials only to its app backend over HTTPS.
+2. App backend calls `POST /api/auth/login` over HTTPS and receives that user's bearer token.
+3. Backend keeps token only in its server-side session, mapped to its own `HttpOnly`, `Secure`, `SameSite=Strict` browser cookie.
+4. Backend calls StockIt with `Authorization: Bearer <token>`; StockIt applies user role and sets creator-managed `usr_id` fields to that real user.
+5. App logout calls `POST /api/auth/logout`; user must reauthenticate after StockIt's 15-minute idle expiry or restart.
+
+This is trusted-LAN trial flow. Never log credentials/tokens or persist user tokens. Replace it with delegated SSO and app-specific permissions before untrusted or internet-facing deployment.
 
 ### Connecting Claude Code to the StockIt MCP server
 
