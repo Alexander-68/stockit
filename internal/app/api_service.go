@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -114,6 +115,14 @@ type tableListInput struct {
 	Offset      int
 	ParentField string
 	ParentID    string
+	// Equals, From and To are raw column filters keyed by column name; From and
+	// To bound a column inclusively, which is how callers page a date range.
+	Equals map[string]string
+	From   map[string]string
+	To     map[string]string
+	// Search is a case-insensitive substring matched against the table's listed
+	// text columns.
+	Search string
 }
 
 func (s *Server) roleHasAnyWritableTable(role string) bool {
@@ -194,13 +203,35 @@ func (s *Server) apiListRecords(ctx context.Context, principal Principal, tableN
 	if err != nil {
 		return apiTableListResponse{}, status, err
 	}
+	equals, status, err := resolveColumnFilters(table, input.Equals)
+	if err != nil {
+		return apiTableListResponse{}, status, err
+	}
+	for column, value := range equals {
+		if filter == nil {
+			filter = map[string]any{}
+		}
+		filter[column] = value
+	}
+	from, status, err := resolveColumnFilters(table, input.From)
+	if err != nil {
+		return apiTableListResponse{}, status, err
+	}
+	to, status, err := resolveColumnFilters(table, input.To)
+	if err != nil {
+		return apiTableListResponse{}, status, err
+	}
 
 	result, err := s.store.List(ctx, table.Name, store.ListOptions{
-		Sort:   table.SortColumn(input.Sort),
-		Desc:   input.Desc,
-		Limit:  input.Limit,
-		Offset: input.Offset,
-		Filter: filter,
+		Sort:          table.SortColumn(input.Sort),
+		Desc:          input.Desc,
+		Limit:         input.Limit,
+		Offset:        input.Offset,
+		Filter:        filter,
+		From:          from,
+		To:            to,
+		Search:        input.Search,
+		SearchColumns: searchableColumns(table),
 	})
 	if err != nil {
 		return apiTableListResponse{}, 500, err
@@ -245,6 +276,39 @@ func resolveParentFilter(table store.TableDef, parentField, parentID string) (ma
 		return nil, 400, fmt.Errorf("invalid parent_id")
 	}
 	return map[string]any{field.Column: parsed}, 0, nil
+}
+
+// resolveColumnFilters parses raw query filters against the table schema so a
+// caller can only filter on declared columns, with values coerced to the
+// column's own type instead of being interpolated as text.
+func resolveColumnFilters(table store.TableDef, raw map[string]string) (map[string]any, int, error) {
+	if len(raw) == 0 {
+		return nil, 0, nil
+	}
+	resolved := make(map[string]any, len(raw))
+	for column, value := range raw {
+		field, ok := table.Field(column)
+		if !ok {
+			return nil, 400, fmt.Errorf("unknown filter column %q", column)
+		}
+		parsed, err := store.ParseFieldValue(field, value)
+		if err != nil || parsed == nil {
+			return nil, 400, fmt.Errorf("invalid value for filter column %q", column)
+		}
+		resolved[field.Column] = parsed
+	}
+	return resolved, 0, nil
+}
+
+// searchableColumns lists the free-text columns a search query may match.
+func searchableColumns(table store.TableDef) []string {
+	columns := make([]string, 0, len(table.Fields))
+	for _, field := range table.Fields {
+		if field.Kind == store.KindText || field.Kind == store.KindTextarea {
+			columns = append(columns, field.Column)
+		}
+	}
+	return columns
 }
 
 func (s *Server) apiGetRecord(ctx context.Context, principal Principal, tableName, id string) (apiTableRowResponse, int, error) {
@@ -487,6 +551,28 @@ func parseListInput(limitValue, offsetValue, sortValue, descValue, parentFieldVa
 		ParentField: strings.TrimSpace(parentFieldValue),
 		ParentID:    strings.TrimSpace(parentIDValue),
 	}, nil
+}
+
+// prefixedQueryFilters collects "<prefix>.<column>=<value>" query parameters,
+// which is how REST callers express equality and range filters.
+func prefixedQueryFilters(query url.Values, prefix string) map[string]string {
+	filters := map[string]string{}
+	for key, values := range query {
+		column, ok := strings.CutPrefix(key, prefix+".")
+		if !ok || len(values) == 0 {
+			continue
+		}
+		column = strings.TrimSpace(column)
+		value := strings.TrimSpace(values[0])
+		if column == "" || value == "" {
+			continue
+		}
+		filters[column] = value
+	}
+	if len(filters) == 0 {
+		return nil
+	}
+	return filters
 }
 
 func parseBoundedInt(raw string, defaultValue, minValue, maxValue int, fieldName string) (int, error) {

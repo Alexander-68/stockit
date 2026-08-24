@@ -11,6 +11,8 @@ Go 1.27+. Use new stdlib over external libs:
 
 Indirect deps stay pinned as-is when swapping them needs external rework.
 
+Version stamp: StockIt (`app.Version`) and every app under `apps/` carry a version formatted `1.0.YYMMDD`, shown under the app title. Bump it to the current date on every code change.
+
 After feature change, ensure automated tests to cover new functionality.
 After feature change, ensure .md files to reflect new functionality. 
 

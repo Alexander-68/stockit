@@ -113,7 +113,7 @@ func TestProxyRejectsUnlistedTablesMethodsAndAnonymous(t *testing.T) {
 		want         int
 	}{
 		{http.MethodGet, "/api/tables/users", http.StatusForbidden},
-		{http.MethodPost, "/api/tables/suppliers", http.StatusForbidden},
+		{http.MethodPost, "/api/tables/quotes", http.StatusForbidden},
 		{http.MethodDelete, "/api/tables/items/1", http.StatusForbidden},
 		{http.MethodGet, "/api/tables/purchase_orders/1/extra", http.StatusForbidden},
 	}

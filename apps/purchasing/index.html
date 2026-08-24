@@ -8,9 +8,10 @@
   <link rel="stylesheet" href="/assets/app/app.css">
   <style>
     :root { color-scheme: light; }
-    body { max-width: 1100px; margin: 0 auto; padding: 2rem; color: #172033; }
+    body { max-width: 1180px; margin: 0 auto; padding: 2rem; color: #172033; }
     header, section { background: #fff; border: 1px solid #dce3ee; border-radius: .75rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 4px 18px #1720330d; }
-    header { display: flex; justify-content: space-between; align-items: center; } h1, h2 { margin: 0 0 .75rem; } h1 { font-size: 1.5rem; margin: 0; } h2 { font-size: 1.1rem; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    h1, h2 { margin: 0 0 .75rem; } h1 { font-size: 1.5rem; margin: 0; } h2 { font-size: 1.1rem; }
     .version { margin: .15rem 0 0; font-size: .72rem; letter-spacing: .12em; color: #667085; }
     .section-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .75rem; } .section-head h2 { margin: 0; }
     label { display: block; font-weight: 600; margin-top: .75rem; }
@@ -18,6 +19,7 @@
     td input, td select { margin-top: 0; padding: .35rem; min-height: 2.1rem; }
     button { border: 1px solid #155eef; border-radius: .4rem; padding: .55rem .9rem; background: transparent; color: #155eef; cursor: pointer; font-weight: 700; }
     button.secondary { border-color: #475467; color: #475467; } button.danger { border-color: #b42318; color: #b42318; }
+    nav button { border-color: transparent; color: #475467; } nav button.active { border-color: #155eef; color: #155eef; }
     .controls { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; }
     .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0 .75rem; margin-bottom: .5rem; }
@@ -25,10 +27,11 @@
     table { width: 100%; border-collapse: collapse; } th, td { padding: .5rem; border-bottom: 1px solid #e4e9f2; text-align: left; vertical-align: middle; }
     th.num, td.num { text-align: right; }
     th[data-sort] { cursor: pointer; user-select: none; } th[data-sort]:hover { color: #155eef; }
-    .error { color: #b42318; margin: .5rem 0 0; } .muted { color: #667085; }
-    .hidden, .error:empty, .muted:empty { display: none; }
+    .error { color: #b42318; margin: .5rem 0 0; } .muted { color: #667085; } .warn { color: #b54708; }
+    .hidden, .error:empty, .muted:empty, .warn:empty { display: none; }
     section > *:last-child, form > *:last-child { margin-bottom: 0; }
-    #po-table tbody tr { cursor: pointer; } #po-table tbody tr:hover { background: #f0f4fb; }
+    #po-table tbody tr, #supplier-table tbody tr { cursor: pointer; }
+    #po-table tbody tr:hover, #supplier-table tbody tr:hover { background: #f0f4fb; }
     #login-shell { display: flex; min-height: 60vh; align-items: center; } #login-shell.hidden { display: none; }
     #login { width: min(28rem, 100%); margin: 0 auto; border-radius: 1.75rem; padding: 2rem; }
     #login .login-head { display: block; background: none; border: 0; box-shadow: none; padding: 0; margin: 0 0 1.5rem; }
@@ -48,7 +51,11 @@
   </style>
 </head>
 <body class="stockit-app-shell">
-  <header><div><h1>Purchasing</h1><p class="version" id="version"></p></div><div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div></header>
+  <header>
+    <div><h1>Purchasing</h1><p class="version" id="version"></p></div>
+    <nav id="nav" class="controls hidden"><button data-view="list" type="button">Purchase orders</button><button data-view="suppliers" type="button">Suppliers</button></nav>
+    <div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div>
+  </header>
 
   <div id="login-shell">
     <form id="login" class="stockit-login-card">
@@ -80,7 +87,7 @@
 
   <main id="edit-view" class="hidden">
     <section>
-      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="print" class="secondary hidden" type="button">Print</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
+      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="copy-po" class="secondary hidden" type="button">Copy PO</button><button id="print" class="secondary hidden" type="button">Print</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
       <form id="po-form">
         <div class="grid">
           <label>Doc number<input name="por_doc_number" required></label>
@@ -96,7 +103,7 @@
     </section>
 
     <section id="lines-section" class="hidden">
-      <div class="section-head"><h2>Order lines</h2><span id="line-totals" class="muted"></span></div>
+      <div class="section-head"><h2>Order lines &amp; receipts</h2><span id="line-totals" class="muted"></span></div>
       <div id="lines"></div>
       <form id="line-form">
         <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th></th></tr></thead><tbody><tr>
@@ -107,6 +114,8 @@
           <td><button>Add line</button></td>
         </tr></tbody></table>
       </form>
+      <p id="quote-hint" class="muted"></p>
+      <p id="price-warning" class="warn"></p>
       <p id="lines-error" class="error"></p>
     </section>
 
@@ -128,6 +137,43 @@
     </section>
   </main>
 
+  <section id="suppliers-view" class="hidden">
+    <div class="section-head"><h2>Suppliers</h2><div class="controls"><button id="new-supplier" type="button">New supplier</button><input id="supplier-search" type="search" placeholder="Search suppliers" style="width:14rem;margin:0"></div></div>
+    <p id="supplier-list-error" class="error"></p>
+    <div id="supplier-table"></div>
+  </section>
+
+  <main id="supplier-edit-view" class="hidden">
+    <section>
+      <div class="section-head"><h2 id="supplier-title">New supplier</h2><div class="controls"><button id="supplier-back" class="secondary" type="button">Back to suppliers</button><button id="delete-supplier" class="danger hidden" type="button">Delete supplier</button></div></div>
+      <form id="supplier-form">
+        <div class="grid">
+          <label>Code<input name="sup_code"></label>
+          <label>Name (EN)<input name="sup_name_en" required></label>
+          <label>Name (ZH)<input name="sup_name_zh"></label>
+          <label>Type<input name="sup_type"></label>
+          <label>Contact name<input name="sup_contact_name"></label>
+          <label>Contact phone<input name="sup_contact_phone"></label>
+          <label>Contact email<input name="sup_contact_email" type="email"></label>
+          <label>Website<input name="sup_website"></label>
+          <label>VAT number<input name="sup_vat_number"></label>
+          <label>Bank name<input name="sup_bank_name"></label>
+          <label>Bank account<input name="sup_bank_account"></label>
+          <label>Status<select name="sup_status" id="supplier-status-select"></select></label>
+        </div>
+        <label>Address (EN)<textarea name="sup_address_en" rows="2"></textarea></label>
+        <label>Note<textarea name="sup_note" rows="2"></textarea></label>
+        <div class="controls" style="margin-top:.75rem"><button>Save supplier</button><span id="supplier-error" class="error" style="margin:0"></span></div>
+      </form>
+    </section>
+
+    <section id="supplier-history-section" class="hidden">
+      <div class="section-head"><h2>Purchase history</h2><span id="supplier-spend" class="muted"></span></div>
+      <div id="supplier-history"></div>
+      <p id="supplier-history-error" class="error"></p>
+    </section>
+  </main>
+
   <div id="print-view"></div>
 
   <script>
@@ -135,16 +181,19 @@
     const CURRENCIES = ['USD', 'TWD', 'CNY', 'EUR'];
     const PO_STATUSES = ['draft', 'issued', 'approved', 'sent', 'confirmed', 'paid', 'prepared', 'shipped', 'delivered', 'received', 'complete', 'inactive'];
     const OBLIGATION_STATUSES = ['planned', 'due', 'paid', 'cancelled'];
-    // ponytail: the StockIt list API has no server-side date/status filter, so the browser pulls
-    // this window and filters locally. Push filters into /api/tables when a site outgrows the cap.
-    const MAX_ROWS = 5000, DEFAULT_MONTHS = 12;
+    const SUPPLIER_STATUSES = ['Draft', 'Under Review', 'Active', 'Inactive', 'Hold', 'Phase-Out', 'Obsolete'];
+    const SUPPLIER_FIELDS = ['sup_code', 'sup_name_en', 'sup_name_zh', 'sup_type', 'sup_contact_name', 'sup_contact_phone', 'sup_contact_email', 'sup_website', 'sup_vat_number', 'sup_bank_name', 'sup_bank_account', 'sup_status', 'sup_address_en', 'sup_note'];
+    // StockIt filters by date range and status server-side, so the browser only holds the window it asked for.
+    const MAX_ROWS = 5000, DEFAULT_MONTHS = 12, PRICE_TOLERANCE = 0.005, TOTALS_BATCH = 8;
     const $ = selector => document.querySelector(selector);
     const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const number = value => Number(value ?? 0).toLocaleString();
     const options = (list, selected) => list.map(v => `<option value="${escape(v)}"${String(v) === String(selected) ? ' selected' : ''}>${escape(v)}</option>`).join('');
     const isoDate = date => date.toISOString().slice(0, 10);
+    const money = totals => Object.entries(totals).map(([currency, total]) => `${number(Math.round(total * 100) / 100)} ${currency}`).join('; ');
 
-    let suppliers = [], items = [], orders = [], currentPO = null, lines = [], schedule = [];
+    let suppliers = [], items = [], orders = [], currentPO = null, currentSupplier = null;
+    let lines = [], schedule = [], priceList = {}, orderTotals = {};
     let sort = { key: 'por_doc_date', desc: true };
 
     async function api(method, path, body) {
@@ -156,10 +205,14 @@
       return data;
     }
 
-    async function listAll(table, sortSpec, extra = '', max = Infinity) {
+    const queryString = params => Object.entries(params)
+      .filter(([, value]) => value !== '' && value !== null && value !== undefined)
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&');
+
+    async function listAll(table, params = {}, max = Infinity) {
       const rows = [];
       while (rows.length < max) {
-        const page = await api('GET', `/api/tables/${table}?sort=${sortSpec}&limit=200&offset=${rows.length}${extra}`);
+        const page = await api('GET', `/api/tables/${table}?${queryString({...params, limit: 200, offset: rows.length})}`);
         rows.push(...page.rows);
         if (!page.has_more || !page.rows.length) break;
       }
@@ -168,16 +221,29 @@
 
     const supplierName = id => { const s = suppliers.find(s => s.sup_id === id); return s ? (s.sup_name_en || s.sup_code || `#${id}`) : (id ? `#${id}` : ''); };
     const itemName = id => { const i = items.find(i => i.itm_id === id); return i ? `${i.itm_sku || ''} ${i.itm_model || ''}`.trim() || `#${id}` : (id ? `#${id}` : ''); };
+    function sumByCurrency(rows, currencyOf, amountOf) {
+      const totals = {};
+      for (const row of rows) { const currency = currencyOf(row); if (currency) totals[currency] = (totals[currency] || 0) + amountOf(row); }
+      return totals;
+    }
+    const lineTotals = rows => sumByCurrency(rows, l => l.poc_currency, l => (l.poc_qty || 0) * (l.poc_price || 0));
 
     // --- views ---
     function show(view) {
       $('#login-shell').classList.toggle('hidden', view !== 'login');
       $('#list-view').classList.toggle('hidden', view !== 'list');
       $('#edit-view').classList.toggle('hidden', view !== 'edit');
+      $('#suppliers-view').classList.toggle('hidden', view !== 'suppliers');
+      $('#supplier-edit-view').classList.toggle('hidden', view !== 'supplier-edit');
       $('#identity').classList.toggle('hidden', view === 'login');
+      $('#nav').classList.toggle('hidden', view === 'login');
+      for (const button of document.querySelectorAll('#nav button')) {
+        button.classList.toggle('active', (button.dataset.view === 'list' && (view === 'list' || view === 'edit')) || (button.dataset.view === 'suppliers' && view.startsWith('supplier')));
+      }
     }
     function showLogin() { $('#login').reset(); $('#login-error').classList.add('hidden'); show('login'); }
 
+    // --- purchase order list ---
     function defaultFrom() { const date = new Date(); date.setMonth(date.getMonth() - DEFAULT_MONTHS); return isoDate(date); }
     function resetFilters() {
       $('#filter-from').value = defaultFrom();
@@ -185,16 +251,7 @@
       $('#filter-supplier').value = '';
       $('#filter-status').value = '';
       $('#filter-search').value = '';
-      renderList();
-    }
-
-    async function showList() {
-      show('list');
-      $('#list-error').textContent = '';
-      try {
-        orders = await listAll('purchase_orders', 'por_doc_date&desc=true', '', MAX_ROWS);
-        renderList();
-      } catch (error) { $('#list-error').textContent = error.message; }
+      showList();
     }
 
     const COLUMNS = [
@@ -202,40 +259,64 @@
       { key: 'supplier', label: 'Supplier', value: po => supplierName(po.sup_id) },
       { key: 'por_doc_date', label: 'Doc date', value: po => po.por_doc_date },
       { key: 'por_ship_date', label: 'Ship date', value: po => po.por_ship_date },
-      { key: 'por_paid_date', label: 'Paid date', value: po => po.por_paid_date },
       { key: 'por_status', label: 'Status', value: po => po.por_status },
     ];
 
-    function filteredOrders() {
+    async function showList() {
+      show('list');
+      $('#list-error').textContent = '';
+      const params = { sort: 'por_doc_date', desc: true };
       const from = $('#filter-from').value, to = $('#filter-to').value;
-      const supplier = $('#filter-supplier').value, status = $('#filter-status').value;
-      const search = $('#filter-search').value.trim().toLowerCase();
-      return orders.filter(po => {
-        const date = po.por_doc_date || '';
-        if (from && (!date || date < from)) return false;
-        if (to && (!date || date > to)) return false;
-        if (supplier && String(po.sup_id) !== supplier) return false;
-        if (status && po.por_status !== status) return false;
-        if (search && !`${po.por_doc_number || ''} ${po.por_note || ''}`.toLowerCase().includes(search)) return false;
-        return true;
-      });
+      if (from) params['from.por_doc_date'] = from;
+      if (to) params['to.por_doc_date'] = to;
+      if ($('#filter-supplier').value) params['filter.sup_id'] = $('#filter-supplier').value;
+      if ($('#filter-status').value) params['filter.por_status'] = $('#filter-status').value;
+      if ($('#filter-search').value.trim()) params.q = $('#filter-search').value.trim();
+      try {
+        orders = await listAll('purchase_orders', params, MAX_ROWS);
+        renderList();
+        loadOrderTotals(orders);
+      } catch (error) { $('#list-error').textContent = error.message; }
     }
 
     function renderList() {
-      const rows = filteredOrders();
+      const rows = orders.slice();
       const column = COLUMNS.find(c => c.key === sort.key) || COLUMNS[2];
       rows.sort((a, b) => String(column.value(a) ?? '').localeCompare(String(column.value(b) ?? ''), undefined, { numeric: true }) * (sort.desc ? -1 : 1));
-      $('#list-count').textContent = `${rows.length} shown of ${orders.length} loaded${orders.length >= MAX_ROWS ? ` (load capped at ${MAX_ROWS} rows)` : ''}`;
+      $('#list-count').textContent = `${rows.length} purchase orders${rows.length >= MAX_ROWS ? ` (load capped at ${MAX_ROWS}; narrow the filters)` : ''}`;
       $('#po-table').innerHTML = rows.length ? `<table><thead><tr>${
         COLUMNS.map(c => `<th data-sort="${c.key}">${escape(c.label)}${sort.key === c.key ? (sort.desc ? ' &#9660;' : ' &#9650;') : ''}</th>`).join('')
-      }</tr></thead><tbody>${
-        rows.map(po => `<tr data-id="${po.por_id}">${COLUMNS.map(c => `<td>${escape(c.value(po))}</td>`).join('')}</tr>`).join('')
+      }<th class="num">Order total</th></tr></thead><tbody>${
+        rows.map(po => `<tr data-id="${po.por_id}">${COLUMNS.map(c => `<td>${escape(c.value(po))}</td>`).join('')}<td class="num" data-total="${po.por_id}">${
+          orderTotals[po.por_id] ? escape(money(orderTotals[po.por_id])) : '&hellip;'
+        }</td></tr>`).join('')
       }</tbody></table>` : '<p class="muted">No purchase orders match these filters.</p>';
     }
 
+    // ponytail: totals are one request per order because StockIt has no line rollup endpoint;
+    // batched so a wide window does not open hundreds of sockets at once.
+    async function loadOrderTotals(rows) {
+      for (const po of rows) {
+        const cell = document.querySelector(`td[data-total="${po.por_id}"]`);
+        if (cell && orderTotals[po.por_id]) cell.textContent = money(orderTotals[po.por_id]);
+      }
+      const pending = rows.filter(po => !(po.por_id in orderTotals));
+      for (let index = 0; index < pending.length; index += TOTALS_BATCH) {
+        await Promise.all(pending.slice(index, index + TOTALS_BATCH).map(async po => {
+          try {
+            const poLines = await listAll('po_components', { sort: 'poc_id', parent_id: po.por_id });
+            orderTotals[po.por_id] = lineTotals(poLines);
+            const cell = document.querySelector(`td[data-total="${po.por_id}"]`);
+            if (cell) cell.textContent = money(orderTotals[po.por_id]);
+          } catch { /* a failed total must not break the list */ }
+        }));
+      }
+    }
+
+    // --- purchase order editor ---
     async function openPO(id) {
-      currentPO = null; lines = []; schedule = [];
-      $('#edit-error').textContent = ''; $('#lines-error').textContent = ''; $('#schedule-error').textContent = '';
+      currentPO = null; lines = []; schedule = []; priceList = {};
+      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning']) $(id).textContent = '';
       if (id != null) {
         try {
           const record = await api('GET', `/api/tables/purchase_orders/${id}`);
@@ -252,12 +333,9 @@
       $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'draft');
       form.por_note.value = po.por_note || '';
       $('#edit-title').textContent = currentPO ? `Purchase order ${currentPO.por_doc_number}` : 'New purchase order';
-      $('#delete-po').classList.toggle('hidden', !currentPO);
-      $('#print').classList.toggle('hidden', !currentPO);
-      $('#lines-section').classList.toggle('hidden', !currentPO);
-      $('#schedule-section').classList.toggle('hidden', !currentPO);
+      for (const id of ['#delete-po', '#print', '#copy-po', '#lines-section', '#schedule-section']) $(id).classList.toggle('hidden', !currentPO);
       show('edit');
-      if (currentPO) await Promise.all([loadLines(), loadSchedule()]);
+      if (currentPO) await Promise.all([loadLines(), loadSchedule(), loadPriceList(currentPO.sup_id)]);
     }
 
     function formPayload(form, fields) {
@@ -266,42 +344,98 @@
       return payload;
     }
 
-    // --- order lines ---
+    // --- supplier price list, taken from active quotes (newest quote wins) ---
+    async function loadPriceList(supplierID) {
+      priceList = {};
+      if (!supplierID) return;
+      try {
+        const quotes = await listAll('quotes', { sort: 'qot_doc_date', desc: true, 'filter.sup_id': supplierID, 'filter.qot_status': 'active' });
+        for (const quote of quotes) {
+          const components = await listAll('quote_components', { sort: 'qoc_id', parent_id: quote.qot_id });
+          for (const component of components) {
+            if (!(component.itm_id in priceList)) priceList[component.itm_id] = { ...component, doc: quote.qot_doc_number };
+          }
+        }
+      } catch { /* quotes are advisory: a missing price list must not block ordering */ }
+      applyQuote();
+    }
+
+    function quoteFor(itemID) { return priceList[Number(itemID)]; }
+
+    function applyQuote() {
+      const form = $('#line-form');
+      const quote = quoteFor(form.itm_id.value);
+      if (!quote) { $('#quote-hint').textContent = Object.keys(priceList).length ? 'No active quote for this item.' : ''; checkPriceDeviation(); return; }
+      $('#quote-hint').textContent = `Quoted ${number(quote.qot_price)} ${quote.qot_currency || ''} on ${quote.doc}${quote.qot_moq ? `; MOQ ${number(quote.qot_moq)}` : ''}${quote.qot_lead_time ? `; lead time ${quote.qot_lead_time}` : ''}.`;
+      if (form.poc_price.value === '') {
+        form.poc_price.value = quote.qot_price ?? '';
+        if (quote.qot_currency) form.poc_currency.value = quote.qot_currency;
+      }
+      checkPriceDeviation();
+    }
+
+    function checkPriceDeviation() {
+      const form = $('#line-form');
+      const quote = quoteFor(form.itm_id.value);
+      const price = Number(form.poc_price.value);
+      if (!quote || !quote.qot_price || !form.poc_price.value) { $('#price-warning').textContent = ''; return; }
+      const deviation = (price - quote.qot_price) / quote.qot_price;
+      $('#price-warning').textContent = Math.abs(deviation) > PRICE_TOLERANCE
+        ? `Price is ${(deviation * 100).toFixed(1)}% off the quoted ${number(quote.qot_price)} ${quote.qot_currency || ''}.` : '';
+    }
+
+    // --- order lines and goods receipt ---
     async function loadLines() {
-      lines = await listAll('po_components', 'poc_id', `&parent_id=${currentPO.por_id}`);
+      lines = await listAll('po_components', { sort: 'poc_id', parent_id: currentPO.por_id });
       renderLines();
     }
     function renderLines() {
-      $('#lines').innerHTML = lines.length ? `<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th><th></th></tr></thead><tbody>${
+      $('#lines').innerHTML = lines.length ? `<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th><th class="num">Received</th><th>Received date</th><th class="num">Outstanding</th><th></th></tr></thead><tbody>${
         lines.map((line, index) => `<tr>
           <td>${escape(itemName(line.itm_id))}</td>
           <td class="num"><input data-index="${index}" data-field="poc_qty" type="number" step="any" value="${line.poc_qty ?? ''}"></td>
           <td class="num"><input data-index="${index}" data-field="poc_price" type="number" step="any" value="${line.poc_price ?? ''}"></td>
           <td><select data-index="${index}" data-field="poc_currency">${options(CURRENCIES, line.poc_currency)}</select></td>
           <td class="num">${number((line.poc_qty || 0) * (line.poc_price || 0))}</td>
-          <td><button class="secondary" data-save-line="${index}" type="button">Save</button> <button class="danger" data-delete-line="${index}" type="button">Delete</button></td>
+          <td class="num"><input data-index="${index}" data-field="poc_received_qty" type="number" step="any" min="0" value="${line.poc_received_qty ?? ''}"></td>
+          <td><input data-index="${index}" data-field="poc_received_date" type="date" value="${escape(line.poc_received_date)}"></td>
+          <td class="num">${number(Math.max(0, (line.poc_qty || 0) - (line.poc_received_qty || 0)))}</td>
+          <td><button class="secondary" data-receive-line="${index}" type="button">Receive all</button> <button class="secondary" data-save-line="${index}" type="button">Save</button> <button class="danger" data-delete-line="${index}" type="button">Delete</button></td>
         </tr>`).join('')
       }</tbody></table>` : '<p class="muted">No lines yet.</p>';
-      const totals = {};
-      for (const line of lines) if (line.poc_currency) totals[line.poc_currency] = (totals[line.poc_currency] || 0) + (line.poc_qty || 0) * (line.poc_price || 0);
-      $('#line-totals').textContent = Object.keys(totals).length ? 'Order totals: ' + Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency}`).join('; ') : '';
+      const totals = lineTotals(lines);
+      const ordered = lines.reduce((sum, line) => sum + (line.poc_qty || 0), 0);
+      const received = lines.reduce((sum, line) => sum + (line.poc_received_qty || 0), 0);
+      $('#line-totals').textContent = `${Object.keys(totals).length ? 'Order totals: ' + money(totals) + '. ' : ''}Received ${number(received)} of ${number(ordered)} units.`;
+    }
+    function saveLinePayload(line) {
+      return {
+        itm_id: line.itm_id, poc_qty: line.poc_qty, poc_price: line.poc_price, poc_currency: line.poc_currency,
+        poc_received_qty: line.poc_received_qty ?? null, poc_received_date: line.poc_received_date || null,
+      };
     }
     $('#lines').addEventListener('input', event => {
       const { index, field } = event.target.dataset;
       if (index != null) lines[index][field] = event.target.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value;
     });
     $('#lines').addEventListener('click', async event => {
-      const save = event.target.dataset.saveLine, remove = event.target.dataset.deleteLine;
+      const { saveLine, deleteLine, receiveLine } = event.target.dataset;
       $('#lines-error').textContent = '';
       try {
-        if (save != null) {
-          const line = lines[save];
-          await api('PUT', `/api/tables/po_components/${line.poc_id}`, { itm_id: line.itm_id, poc_qty: line.poc_qty, poc_price: line.poc_price, poc_currency: line.poc_currency });
+        if (receiveLine != null) {
+          const line = lines[receiveLine];
+          line.poc_received_qty = line.poc_qty;
+          line.poc_received_date = line.poc_received_date || isoDate(new Date());
+          await api('PUT', `/api/tables/po_components/${line.poc_id}`, saveLinePayload(line));
           await loadLines();
-        } else if (remove != null) {
-          await api('DELETE', `/api/tables/po_components/${lines[remove].poc_id}`);
+        } else if (saveLine != null) {
+          await api('PUT', `/api/tables/po_components/${lines[saveLine].poc_id}`, saveLinePayload(lines[saveLine]));
+          await loadLines();
+        } else if (deleteLine != null) {
+          await api('DELETE', `/api/tables/po_components/${lines[deleteLine].poc_id}`);
           await loadLines();
         }
+        delete orderTotals[currentPO.por_id];
       } catch (error) { $('#lines-error').textContent = error.message; }
     });
     $('#line-form').addEventListener('submit', async event => {
@@ -317,14 +451,18 @@
           poc_currency: form.poc_currency.value,
         });
         form.poc_qty.value = ''; form.poc_price.value = '';
+        delete orderTotals[currentPO.por_id];
         await loadLines();
+        applyQuote();
       } catch (error) { $('#lines-error').textContent = error.message; }
     });
+    $('#item-select').addEventListener('change', () => { $('#line-form').poc_price.value = ''; applyQuote(); });
+    $('#line-form').poc_price.addEventListener('input', checkPriceDeviation);
 
     // --- payment schedule (financial obligations) ---
     async function loadSchedule() {
-      const all = await listAll('financial_obligations', 'fob_id');
-      schedule = all.filter(fob => fob.fob_source_type === 'purchase_order' && fob.fob_source_id === currentPO.por_id);
+      const all = await listAll('financial_obligations', { sort: 'fob_id', 'filter.fob_source_type': 'purchase_order', 'filter.fob_source_id': currentPO.por_id });
+      schedule = all;
       renderSchedule();
     }
     function renderSchedule() {
@@ -338,28 +476,29 @@
           <td><button class="secondary" data-save-fob="${index}" type="button">Save</button> <button class="danger" data-delete-fob="${index}" type="button">Delete</button></td>
         </tr>`).join('')
       }</tbody></table>` : '<p class="muted">No installments yet.</p>';
-      const totals = {};
-      for (const fob of schedule) if (fob.fob_status !== 'cancelled') totals[fob.fob_currency] = (totals[fob.fob_currency] || 0) + (fob.fob_amount_minor || 0);
+      const totals = sumByCurrency(schedule.filter(fob => fob.fob_status !== 'cancelled'), fob => fob.fob_currency, fob => fob.fob_amount_minor || 0);
       $('#schedule-totals').textContent = Object.keys(totals).length ? 'Scheduled (excluding cancelled): ' + Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency} minor`).join('; ') : '';
     }
     $('#schedule').addEventListener('input', event => {
       const { index, field } = event.target.dataset;
       if (index != null) schedule[index][field] = event.target.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value;
     });
+    function obligationPayload(fob) {
+      return {
+        fob_type: 'payable', fob_source_type: 'purchase_order', fob_source_id: currentPO.por_id,
+        fob_label: fob.fob_label, fob_due_date: fob.fob_due_date, fob_amount_minor: fob.fob_amount_minor,
+        fob_currency: fob.fob_currency, fob_status: fob.fob_status, fob_counterparty: supplierName(currentPO.sup_id) || null,
+      };
+    }
     $('#schedule').addEventListener('click', async event => {
-      const save = event.target.dataset.saveFob, remove = event.target.dataset.deleteFob;
+      const { saveFob, deleteFob } = event.target.dataset;
       $('#schedule-error').textContent = '';
       try {
-        if (save != null) {
-          const fob = schedule[save];
-          await api('PUT', `/api/tables/financial_obligations/${fob.fob_id}`, {
-            fob_type: 'payable', fob_source_type: 'purchase_order', fob_source_id: currentPO.por_id,
-            fob_label: fob.fob_label, fob_due_date: fob.fob_due_date, fob_amount_minor: fob.fob_amount_minor,
-            fob_currency: fob.fob_currency, fob_status: fob.fob_status, fob_counterparty: supplierName(currentPO.sup_id) || null,
-          });
+        if (saveFob != null) {
+          await api('PUT', `/api/tables/financial_obligations/${schedule[saveFob].fob_id}`, obligationPayload(schedule[saveFob]));
           await loadSchedule();
-        } else if (remove != null) {
-          await api('DELETE', `/api/tables/financial_obligations/${schedule[remove].fob_id}`);
+        } else if (deleteFob != null) {
+          await api('DELETE', `/api/tables/financial_obligations/${schedule[deleteFob].fob_id}`);
           await loadSchedule();
         }
       } catch (error) { $('#schedule-error').textContent = error.message; }
@@ -369,18 +508,17 @@
       $('#schedule-error').textContent = '';
       const form = event.target;
       try {
-        await api('POST', '/api/tables/financial_obligations', {
-          fob_type: 'payable', fob_source_type: 'purchase_order', fob_source_id: currentPO.por_id,
+        await api('POST', '/api/tables/financial_obligations', obligationPayload({
           fob_label: form.fob_label.value, fob_due_date: form.fob_due_date.value,
           fob_amount_minor: Number(form.fob_amount_minor.value), fob_currency: form.fob_currency.value,
-          fob_status: form.fob_status.value, fob_counterparty: supplierName(currentPO.sup_id) || null,
-        });
+          fob_status: form.fob_status.value,
+        }));
         form.fob_label.value = ''; form.fob_due_date.value = ''; form.fob_amount_minor.value = '';
         await loadSchedule();
       } catch (error) { $('#schedule-error').textContent = error.message; }
     });
 
-    // --- PO header save / delete ---
+    // --- PO header save / copy / delete ---
     $('#po-form').addEventListener('submit', async event => {
       event.preventDefault();
       $('#edit-error').textContent = '';
@@ -396,18 +534,111 @@
         }
       } catch (error) { $('#edit-error').textContent = error.message; }
     });
+    $('#copy-po').addEventListener('click', async () => {
+      if (!currentPO) return;
+      const docNumber = prompt('Document number for the copy', `${currentPO.por_doc_number}-COPY`);
+      if (!docNumber) return;
+      $('#edit-error').textContent = '';
+      try {
+        const record = await api('POST', '/api/tables/purchase_orders', {
+          por_doc_number: docNumber, sup_id: currentPO.sup_id, por_doc_date: isoDate(new Date()),
+          por_status: 'draft', por_note: currentPO.por_note || null,
+        });
+        for (const line of lines) {
+          await api('POST', '/api/tables/po_components', {
+            por_id: record.row.por_id, itm_id: line.itm_id, poc_qty: line.poc_qty,
+            poc_price: line.poc_price, poc_currency: line.poc_currency,
+          });
+        }
+        await openPO(record.row.por_id);
+      } catch (error) { $('#edit-error').textContent = error.message; }
+    });
     $('#delete-po').addEventListener('click', async () => {
       if (!currentPO || !confirm(`Delete PO ${currentPO.por_doc_number}? Its lines are deleted too. Payment schedule rows stay and must be removed by hand.`)) return;
       $('#edit-error').textContent = '';
-      try { await api('DELETE', `/api/tables/purchase_orders/${currentPO.por_id}`); await showList(); }
+      try { await api('DELETE', `/api/tables/purchase_orders/${currentPO.por_id}`); delete orderTotals[currentPO.por_id]; await showList(); }
       catch (error) { $('#edit-error').textContent = error.message; }
     });
+
+    // --- suppliers ---
+    async function showSuppliers() {
+      show('suppliers');
+      $('#supplier-list-error').textContent = '';
+      try {
+        suppliers = await listAll('suppliers', { sort: 'sup_name_en' });
+        renderSuppliers();
+      } catch (error) { $('#supplier-list-error').textContent = error.message; }
+    }
+    function renderSuppliers() {
+      const search = $('#supplier-search').value.trim().toLowerCase();
+      const rows = suppliers.filter(s => !search || `${s.sup_code || ''} ${s.sup_name_en || ''} ${s.sup_name_zh || ''} ${s.sup_contact_name || ''}`.toLowerCase().includes(search));
+      $('#supplier-table').innerHTML = rows.length ? `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Contact</th><th>Email</th><th>Status</th></tr></thead><tbody>${
+        rows.map(s => `<tr data-id="${s.sup_id}"><td>${escape(s.sup_code)}</td><td>${escape(s.sup_name_en)}</td><td>${escape(s.sup_type)}</td><td>${escape(s.sup_contact_name)}</td><td>${escape(s.sup_contact_email)}</td><td>${escape(s.sup_status)}</td></tr>`).join('')
+      }</tbody></table>` : '<p class="muted">No suppliers match this search.</p>';
+    }
+
+    async function openSupplier(id) {
+      currentSupplier = null;
+      $('#supplier-error').textContent = ''; $('#supplier-history-error').textContent = ''; $('#supplier-spend').textContent = '';
+      if (id != null) {
+        try { currentSupplier = (await api('GET', `/api/tables/suppliers/${id}`)).row; }
+        catch (error) { $('#supplier-list-error').textContent = error.message; return; }
+      }
+      const supplier = currentSupplier || {};
+      const form = $('#supplier-form');
+      for (const field of SUPPLIER_FIELDS) if (field !== 'sup_status') form[field].value = supplier[field] || '';
+      $('#supplier-status-select').innerHTML = options(SUPPLIER_STATUSES, supplier.sup_status || 'Active');
+      $('#supplier-title').textContent = currentSupplier ? (currentSupplier.sup_name_en || 'Supplier') : 'New supplier';
+      $('#delete-supplier').classList.toggle('hidden', !currentSupplier);
+      $('#supplier-history-section').classList.toggle('hidden', !currentSupplier);
+      show('supplier-edit');
+      if (currentSupplier) await loadSupplierHistory(currentSupplier.sup_id);
+    }
+
+    async function loadSupplierHistory(supplierID) {
+      try {
+        const history = await listAll('purchase_orders', { sort: 'por_doc_date', desc: true, 'filter.sup_id': supplierID }, 500);
+        $('#supplier-history').innerHTML = history.length ? `<table><thead><tr><th>Doc number</th><th>Doc date</th><th>Status</th><th class="num">Order total</th></tr></thead><tbody>${
+          history.map(po => `<tr data-id="${po.por_id}"><td>${escape(po.por_doc_number)}</td><td>${escape(po.por_doc_date)}</td><td>${escape(po.por_status)}</td><td class="num" data-total="${po.por_id}">&hellip;</td></tr>`).join('')
+        }</tbody></table>` : '<p class="muted">No purchase orders for this supplier yet.</p>';
+        await loadOrderTotals(history);
+        const spend = {};
+        for (const po of history) for (const [currency, total] of Object.entries(orderTotals[po.por_id] || {})) spend[currency] = (spend[currency] || 0) + total;
+        $('#supplier-spend').textContent = Object.keys(spend).length ? `Total ordered: ${money(spend)} across ${history.length} orders.` : `${history.length} orders.`;
+      } catch (error) { $('#supplier-history-error').textContent = error.message; }
+    }
+
+    $('#supplier-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      $('#supplier-error').textContent = '';
+      const payload = formPayload(event.target, SUPPLIER_FIELDS);
+      try {
+        if (currentSupplier) {
+          await api('PUT', `/api/tables/suppliers/${currentSupplier.sup_id}`, payload);
+          await refreshSuppliers();
+          await openSupplier(currentSupplier.sup_id);
+        } else {
+          const record = await api('POST', '/api/tables/suppliers', payload);
+          await refreshSuppliers();
+          await openSupplier(record.row.sup_id);
+        }
+      } catch (error) { $('#supplier-error').textContent = error.message; }
+    });
+    $('#delete-supplier').addEventListener('click', async () => {
+      if (!currentSupplier || !confirm(`Delete supplier ${currentSupplier.sup_name_en}? Purchase orders that reference it keep the id.`)) return;
+      $('#supplier-error').textContent = '';
+      try { await api('DELETE', `/api/tables/suppliers/${currentSupplier.sup_id}`); await refreshSuppliers(); await showSuppliers(); }
+      catch (error) { $('#supplier-error').textContent = error.message; }
+    });
+    async function refreshSuppliers() {
+      suppliers = await listAll('suppliers', { sort: 'sup_name_en' });
+      $('#filter-supplier').innerHTML = '<option value="">All suppliers</option>' + suppliers.map(s => `<option value="${s.sup_id}">${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
+    }
 
     // --- print ---
     $('#print').addEventListener('click', () => {
       const po = currentPO, supplier = suppliers.find(s => s.sup_id === po.sup_id);
-      const totals = {};
-      for (const line of lines) if (line.poc_currency) totals[line.poc_currency] = (totals[line.poc_currency] || 0) + (line.poc_qty || 0) * (line.poc_price || 0);
+      const totals = lineTotals(lines);
       $('#print-view').innerHTML = `
         <h1>Purchase Order ${escape(po.por_doc_number)}</h1>
         <p class="muted">Status: ${escape(po.por_status)}</p>
@@ -416,10 +647,10 @@
           <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '-')}<br>Ship date: ${escape(po.por_ship_date || '-')}<br>Paid date: ${escape(po.por_paid_date || '-')}</div>
         </div>
         <h3>Lines</h3>
-        <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th></tr></thead><tbody>
-          ${lines.map(line => `<tr><td>${escape(itemName(line.itm_id))}</td><td class="num">${number(line.poc_qty)}</td><td class="num">${number(line.poc_price)}</td><td>${escape(line.poc_currency)}</td><td class="num">${number((line.poc_qty || 0) * (line.poc_price || 0))}</td></tr>`).join('') || '<tr><td colspan="5">No lines</td></tr>'}
+        <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th><th class="num">Received</th></tr></thead><tbody>
+          ${lines.map(line => `<tr><td>${escape(itemName(line.itm_id))}</td><td class="num">${number(line.poc_qty)}</td><td class="num">${number(line.poc_price)}</td><td>${escape(line.poc_currency)}</td><td class="num">${number((line.poc_qty || 0) * (line.poc_price || 0))}</td><td class="num">${number(line.poc_received_qty)}</td></tr>`).join('') || '<tr><td colspan="6">No lines</td></tr>'}
         </tbody></table>
-        <p><strong>Totals:</strong> ${Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency}`).join('; ') || '-'}</p>
+        <p><strong>Totals:</strong> ${money(totals) || '-'}</p>
         ${schedule.length ? `<h3>Payment schedule</h3>
         <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor units)</th><th>Currency</th><th>Status</th></tr></thead><tbody>
           ${schedule.map(fob => `<tr><td>${escape(fob.fob_label)}</td><td>${escape(fob.fob_due_date)}</td><td class="num">${number(fob.fob_amount_minor)}</td><td>${escape(fob.fob_currency)}</td><td>${escape(fob.fob_status)}</td></tr>`).join('')}
@@ -436,11 +667,28 @@
       const row = event.target.closest('tr[data-id]');
       if (row) openPO(Number(row.dataset.id));
     });
-    for (const id of ['#filter-from', '#filter-to', '#filter-supplier', '#filter-status', '#filter-search']) $(id).addEventListener('input', renderList);
+    $('#supplier-table').addEventListener('click', event => {
+      const row = event.target.closest('tr[data-id]');
+      if (row) openSupplier(Number(row.dataset.id));
+    });
+    $('#supplier-history').addEventListener('click', event => {
+      const row = event.target.closest('tr[data-id]');
+      if (row) openPO(Number(row.dataset.id));
+    });
+    let searchTimer;
+    for (const id of ['#filter-from', '#filter-to', '#filter-supplier', '#filter-status']) $(id).addEventListener('change', showList);
+    $('#filter-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(showList, 300); });
+    $('#supplier-search').addEventListener('input', renderSuppliers);
     $('#filter-reset').addEventListener('click', resetFilters);
     $('#new-po').addEventListener('click', () => openPO(null));
+    $('#new-supplier').addEventListener('click', () => openSupplier(null));
     $('#reload').addEventListener('click', showList);
     $('#back').addEventListener('click', showList);
+    $('#supplier-back').addEventListener('click', showSuppliers);
+    $('#nav').addEventListener('click', event => {
+      const view = event.target.dataset.view;
+      if (view === 'list') showList(); else if (view === 'suppliers') showSuppliers();
+    });
     $('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
     $('#login').addEventListener('submit', async event => {
       event.preventDefault();
@@ -457,9 +705,9 @@
     });
 
     async function start() {
-      [suppliers, items] = await Promise.all([listAll('suppliers', 'sup_id'), listAll('items', 'itm_id')]);
+      orderTotals = {};
+      [items] = await Promise.all([listAll('items', { sort: 'itm_id' }), refreshSuppliers()]);
       $('#item-select').innerHTML = items.map(i => `<option value="${i.itm_id}">${escape(itemName(i.itm_id))}</option>`).join('');
-      $('#filter-supplier').innerHTML = '<option value="">All suppliers</option>' + suppliers.map(s => `<option value="${s.sup_id}">${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
       $('#filter-status').innerHTML = '<option value="">All statuses</option>' + options(PO_STATUSES);
       $('#filter-from').value = defaultFrom();
       for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');

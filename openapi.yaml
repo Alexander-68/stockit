@@ -8,8 +8,13 @@ info:
     The REST API and MCP tools are intentionally aligned: table catalog/schema discovery,
     record list/get/create/update/delete, and shared session authentication. MCP transport is
     documented in README.md and StokIt_Specification.md rather than OpenAPI.
-    StockIt does not provide workflow-specific operations; client applications own higher-level
-    import, calculation, forecasting, consistency-check, and UI workflows.
+    StockIt owns one workflow: purchase requisition approval. Requisitions are priced from
+    their lines, routed through value-based approval rules, and converted to purchase orders
+    (see the Approvals tag). Client applications still own import, calculation, forecasting,
+    consistency-check, and UI workflows.
+
+    List endpoints filter server-side: `filter.<column>` for equality, `from.<column>` and
+    `to.<column>` for inclusive ranges, and `q` for a substring search across text columns.
 
     Cash-planning tables include bank_accounts, designation_codes, financial_obligations,
     and bank_transactions. Financial obligations represent expected payable or receivable
@@ -26,6 +31,7 @@ tags:
   - name: Auth
   - name: Metadata
   - name: Records
+  - name: Approvals
 security:
   - bearerAuth: []
   - sessionCookie: []
@@ -134,6 +140,10 @@ paths:
         - $ref: '#/components/parameters/Offset'
         - $ref: '#/components/parameters/ParentID'
         - $ref: '#/components/parameters/ParentField'
+        - $ref: '#/components/parameters/ColumnFilter'
+        - $ref: '#/components/parameters/ColumnFrom'
+        - $ref: '#/components/parameters/ColumnTo'
+        - $ref: '#/components/parameters/Search'
       responses:
         '200':
           description: Table rows
@@ -286,6 +296,99 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/purchase_requisitions/{id}/submit:
+    post:
+      tags: [Approvals]
+      summary: Submit a draft requisition for approval
+      description: |
+        Prices the requisition from its lines, stores the total in
+        `prq_total_minor`, and creates one pending approval step per active
+        approval rule whose `apr_min_amount_minor` the total reaches. A
+        requisition that matches no rule is approved outright. Only a draft
+        requisition with at least one line can be submitted.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          description: Submission result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequisitionSubmission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/purchase_requisitions/{id}/purchase_order:
+    post:
+      tags: [Approvals]
+      summary: Create a draft purchase order from an approved requisition
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                por_doc_number:
+                  type: string
+                  description: Defaults to the requisition document number.
+                sup_id:
+                  type: integer
+                  description: Defaults to the requisition's suggested supplier.
+      responses:
+        '201':
+          description: Created purchase order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequisitionPurchaseOrder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/approvals/{id}/decide:
+    post:
+      tags: [Approvals]
+      summary: Approve or reject one pending approval step
+      description: |
+        Steps are decided in order and only by a user whose role matches the
+        step's `apv_role`. A rejection sets the requisition to `rejected`;
+        approving the last pending step sets it to `approved`.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+                note:
+                  type: string
+      responses:
+        '200':
+          description: Decision result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalDecision'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 components:
   securitySchemes:
     bearerAuth:
@@ -328,6 +431,10 @@ components:
           - designation_codes
           - financial_obligations
           - bank_transactions
+          - purchase_requisitions
+          - prq_components
+          - approval_rules
+          - approvals
     RecordID:
       name: id
       in: path
@@ -335,6 +442,36 @@ components:
       schema:
         type: string
       description: Table primary key value. Current built-in tables use integer identifiers.
+    ColumnFilter:
+      name: filter.{column}
+      in: query
+      description: >-
+        Exact-match filter on a declared column, for example
+        `filter.por_status=draft`. Unknown columns are rejected with 400.
+      schema:
+        type: string
+    ColumnFrom:
+      name: from.{column}
+      in: query
+      description: >-
+        Inclusive lower bound on a declared column, for example
+        `from.por_doc_date=2026-01-01`.
+      schema:
+        type: string
+    ColumnTo:
+      name: to.{column}
+      in: query
+      description: >-
+        Inclusive upper bound on a declared column, for example
+        `to.por_doc_date=2026-12-31`.
+      schema:
+        type: string
+    Search:
+      name: q
+      in: query
+      description: Case-insensitive substring matched against the table's text columns.
+      schema:
+        type: string
     Sort:
       name: sort
       in: query
@@ -405,6 +542,51 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    RequisitionSubmission:
+      type: object
+      required: [requisition_id, status, total_minor, approvals]
+      properties:
+        requisition_id:
+          type: integer
+        status:
+          type: string
+          enum: [submitted, approved]
+        total_minor:
+          type: integer
+          description: Requisition value in integer minor units, priced from its lines.
+        currency:
+          type: string
+        approvals:
+          type: array
+          description: Pending approval steps, in decision order.
+          items:
+            type: object
+            additionalProperties: true
+    ApprovalDecision:
+      type: object
+      required: [approval, requisition_id, requisition_status, remaining_approvals]
+      properties:
+        approval:
+          type: object
+          additionalProperties: true
+        requisition_id:
+          type: integer
+        requisition_status:
+          type: string
+          enum: [submitted, approved, rejected]
+        remaining_approvals:
+          type: integer
+    RequisitionPurchaseOrder:
+      type: object
+      required: [requisition_id, purchase_order, table]
+      properties:
+        requisition_id:
+          type: integer
+        purchase_order:
+          type: object
+          additionalProperties: true
+        table:
+          type: string
     LoginRequest:
       type: object
       additionalProperties: false

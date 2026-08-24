@@ -36,6 +36,10 @@ type Config struct {
 	TLSKeyPath  string
 }
 
+// Version is the StockIt release stamp, formatted 1.0.YYMMDD. Bump it on every
+// code change; the external apps under apps/ carry their own matching stamp.
+const Version = "1.0.260825"
+
 type Principal struct {
 	UserID    int64
 	LoginName string
@@ -62,6 +66,7 @@ type dashboardPageData struct {
 	User         Principal
 	Tables       []store.TableDef
 	DefaultTable string
+	Version      string
 }
 
 type tablePanelData struct {
@@ -419,6 +424,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("PUT /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableUpdate)))
 	mux.Handle("DELETE /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableDelete)))
 	mux.Handle("POST /api/tables/{table}/import", s.cop.Handler(s.withSession(s.handleAPITableImport)))
+
+	mux.Handle("POST /api/purchase_requisitions/{id}/submit", s.cop.Handler(s.withSession(s.handleAPISubmitRequisition)))
+	mux.Handle("POST /api/purchase_requisitions/{id}/purchase_order", s.cop.Handler(s.withSession(s.handleAPICreatePOFromRequisition)))
+	mux.Handle("POST /api/approvals/{id}/decide", s.cop.Handler(s.withSession(s.handleAPIDecideApproval)))
 	mcpHandler := s.cop.Handler(s.newMCPHandler())
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("POST /mcp", mcpHandler)
@@ -484,6 +493,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		User:         principal,
 		Tables:       tables,
 		DefaultTable: tables[0].Name,
+		Version:      Version,
 	})
 }
 
@@ -837,18 +847,23 @@ func (s *Server) handleAPITableSchema(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPITableList(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
+	query := r.URL.Query()
 	input, err := parseListInput(
-		r.URL.Query().Get("limit"),
-		r.URL.Query().Get("offset"),
-		r.URL.Query().Get("sort"),
-		r.URL.Query().Get("desc"),
-		r.URL.Query().Get("parent_field"),
-		r.URL.Query().Get("parent_id"),
+		query.Get("limit"),
+		query.Get("offset"),
+		query.Get("sort"),
+		query.Get("desc"),
+		query.Get("parent_field"),
+		query.Get("parent_id"),
 	)
 	if err != nil {
 		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: err.Error()})
 		return
 	}
+	input.Equals = prefixedQueryFilters(query, "filter")
+	input.From = prefixedQueryFilters(query, "from")
+	input.To = prefixedQueryFilters(query, "to")
+	input.Search = strings.TrimSpace(query.Get("q"))
 
 	result, status, err := s.apiListRecords(r.Context(), principal, r.PathValue("table"), input)
 	if err != nil {

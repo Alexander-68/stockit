@@ -19,20 +19,44 @@ const (
 	mcpToolUpdateRecord = "stockit_update_record"
 	mcpToolDeleteRecord = "stockit_delete_record"
 	mcpToolImportCSV    = "stockit_import_csv"
+
+	mcpToolSubmitRequisition = "stockit_submit_requisition"
+	mcpToolDecideApproval    = "stockit_decide_approval"
+	mcpToolRequisitionToPO   = "stockit_create_po_from_requisition"
 )
+
+type mcpSubmitRequisitionArgs struct {
+	RequisitionID string `json:"requisition_id"`
+}
+
+type mcpDecideApprovalArgs struct {
+	ApprovalID string `json:"approval_id"`
+	Decision   string `json:"decision"`
+	Note       string `json:"note"`
+}
+
+type mcpRequisitionToPOArgs struct {
+	RequisitionID string `json:"requisition_id"`
+	DocNumber     string `json:"por_doc_number"`
+	SupplierID    *int64 `json:"sup_id"`
+}
 
 type mcpDescribeTableArgs struct {
 	Table string `json:"table"`
 }
 
 type mcpListRecordsArgs struct {
-	Table       string `json:"table"`
-	Sort        string `json:"sort"`
-	Desc        bool   `json:"desc"`
-	Limit       int    `json:"limit"`
-	Offset      int    `json:"offset"`
-	ParentField string `json:"parent_field"`
-	ParentID    string `json:"parent_id"`
+	Table       string            `json:"table"`
+	Sort        string            `json:"sort"`
+	Desc        bool              `json:"desc"`
+	Limit       int               `json:"limit"`
+	Offset      int               `json:"offset"`
+	ParentField string            `json:"parent_field"`
+	ParentID    string            `json:"parent_id"`
+	Filter      map[string]string `json:"filter"`
+	From        map[string]string `json:"from"`
+	To          map[string]string `json:"to"`
+	Search      string            `json:"search"`
 }
 
 type mcpGetRecordArgs struct {
@@ -77,7 +101,8 @@ func (s *Server) newMCPHandler() http.Handler {
 			filtered := make([]mcp.Tool, 0, len(tools))
 			for _, tool := range tools {
 				switch tool.Name {
-				case mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord, mcpToolImportCSV:
+				case mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord, mcpToolImportCSV,
+					mcpToolSubmitRequisition, mcpToolDecideApproval, mcpToolRequisitionToPO:
 					continue
 				default:
 					filtered = append(filtered, tool)
@@ -146,6 +171,10 @@ func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {
 			mcp.WithNumber("offset", mcp.Description("Row offset starting at 0")),
 			mcp.WithString("parent_id", mcp.Description("Restrict to rows whose parent foreign key equals this id; only valid for subtables")),
 			mcp.WithString("parent_field", mcp.Description("Optional subtable parent column name; defaults to the table's declared parent field")),
+			mcp.WithObject("filter", mcp.Description("Exact-match filters keyed by column name, for example {\"por_status\":\"draft\"}"), mcp.AdditionalProperties(true)),
+			mcp.WithObject("from", mcp.Description("Inclusive lower bounds keyed by column name, for example {\"por_doc_date\":\"2026-01-01\"}"), mcp.AdditionalProperties(true)),
+			mcp.WithObject("to", mcp.Description("Inclusive upper bounds keyed by column name, for example {\"por_doc_date\":\"2026-12-31\"}"), mcp.AdditionalProperties(true)),
+			mcp.WithString("search", mcp.Description("Case-insensitive substring matched against the table's text columns")),
 		),
 		s.handleMCPListRecords,
 	)
@@ -214,6 +243,46 @@ func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {
 			mcp.WithString("csv", mcp.Required(), mcp.Description("CSV document including a header row. Column headers match table field columns or labels.")),
 		),
 		s.handleMCPImportCSV,
+	)
+
+	mcpSrv.AddTool(
+		mcp.NewTool(
+			mcpToolSubmitRequisition,
+			mcp.WithDescription("Submit a draft purchase requisition for approval; prices it from its lines and creates the approval steps its amount requires."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithSchemaAdditionalProperties(false),
+			mcp.WithString("requisition_id", mcp.Required(), mcp.Description("purchase_requisitions.prq_id")),
+		),
+		s.handleMCPSubmitRequisition,
+	)
+
+	mcpSrv.AddTool(
+		mcp.NewTool(
+			mcpToolDecideApproval,
+			mcp.WithDescription("Approve or reject one pending approval step. Only a user holding the step's role may decide it, and steps are decided in order."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithSchemaAdditionalProperties(false),
+			mcp.WithString("approval_id", mcp.Required(), mcp.Description("approvals.apv_id")),
+			mcp.WithString("decision", mcp.Required(), mcp.Description("approved or rejected")),
+			mcp.WithString("note", mcp.Description("Optional decision note kept in the audit trail")),
+		),
+		s.handleMCPDecideApproval,
+	)
+
+	mcpSrv.AddTool(
+		mcp.NewTool(
+			mcpToolRequisitionToPO,
+			mcp.WithDescription("Create a draft purchase order from an approved requisition, copying its lines."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithSchemaAdditionalProperties(false),
+			mcp.WithString("requisition_id", mcp.Required(), mcp.Description("purchase_requisitions.prq_id")),
+			mcp.WithString("por_doc_number", mcp.Description("Purchase order document number; defaults to the requisition document number")),
+			mcp.WithNumber("sup_id", mcp.Description("Supplier id; defaults to the requisition's suggested supplier")),
+		),
+		s.handleMCPRequisitionToPO,
 	)
 }
 
@@ -342,6 +411,51 @@ func (s *Server) handleMCPImportCSV(ctx context.Context, request mcp.CallToolReq
 	return mcp.NewToolResultStructured(result, fmt.Sprintf("Imported %d rows into %s.", result.Imported, result.Table)), nil
 }
 
+func (s *Server) handleMCPSubmitRequisition(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args mcpSubmitRequisitionArgs
+	if err := request.BindArguments(&args); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	principal := principalFromContext(ctx)
+	result, _, err := s.apiSubmitRequisition(ctx, principal, args.RequisitionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Requisition %d is now %s with %d approval steps.", result.RequisitionID, result.Status, len(result.Approvals))), nil
+}
+
+func (s *Server) handleMCPDecideApproval(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args mcpDecideApprovalArgs
+	if err := request.BindArguments(&args); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	principal := principalFromContext(ctx)
+	result, _, err := s.apiDecideApproval(ctx, principal, args.ApprovalID, args.Decision, args.Note)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Requisition %d is now %s with %d approvals still pending.", result.RequisitionID, result.RequisitionStatus, result.RemainingApprovals)), nil
+}
+
+func (s *Server) handleMCPRequisitionToPO(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args mcpRequisitionToPOArgs
+	if err := request.BindArguments(&args); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	principal := principalFromContext(ctx)
+	result, _, err := s.apiCreatePOFromRequisition(ctx, principal, args.RequisitionID, args.DocNumber, args.SupplierID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Created a purchase order from requisition %d.", result.RequisitionID)), nil
+}
+
 func mcpListInput(args mcpListRecordsArgs) (tableListInput, error) {
 	limit := args.Limit
 	if limit == 0 {
@@ -361,5 +475,9 @@ func mcpListInput(args mcpListRecordsArgs) (tableListInput, error) {
 		Offset:      args.Offset,
 		ParentField: args.ParentField,
 		ParentID:    args.ParentID,
+		Equals:      args.Filter,
+		From:        args.From,
+		To:          args.To,
+		Search:      strings.TrimSpace(args.Search),
 	}, nil
 }

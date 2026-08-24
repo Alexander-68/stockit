@@ -108,6 +108,13 @@ body {
   color: var(--stockit-text);
 }
 
+.stockit-identity-meta {
+  margin: 0.3rem 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--stockit-muted);
+}
+
 .stockit-brand-meta {
   margin: 0.25rem 0 0;
   font-size: 0.82rem;

@@ -44,6 +44,7 @@ StockIt is a secure system of record for external web apps and smart tools throu
   - cookie and `Authorization: Bearer` token support
 - Dual HTTP + HTTPS serving for the web UI, REST API, and MCP endpoint.
 - Startup generation of a self-signed TLS certificate and key when the configured files do not exist.
+- Version stamp `1.0.YYMMDD` shown under the dashboard title; the signed-in user and role sit under the Logout button.
 - Standard-library `net/http` routing and handlers.
 - Cross-origin write protection using `net/http.CrossOriginProtection`.
 - Defensive response headers for content type sniffing, framing, referrer policy, and CSP.
@@ -55,18 +56,30 @@ StockIt is a secure system of record for external web apps and smart tools throu
   - table schema discovery
   - validated generic record list/get/create/update/delete
   - parent-filtered list (`?parent_id=<value>` for subtables)
+  - server-side list filters: `?filter.<column>=` (equality), `?from.<column>=` / `?to.<column>=` (inclusive range), `?q=` (substring across text columns)
+  - purchase requisition approval workflow (submit, decide, convert to purchase order)
   - multipart CSV import (`POST /api/tables/{table}/import`)
 - Streamable HTTP MCP server powered by `github.com/mark3labs/mcp-go` on `/mcp`, protected by the same StockIt session authentication as the REST API.
 - MCP tools aligned with REST API operations:
   - `stockit_list_tables`
   - `stockit_describe_table`
-  - `stockit_list_records` (supports `parent_id` / `parent_field` filters for subtables)
+  - `stockit_list_records` (supports `parent_id` / `parent_field` for subtables, plus `filter`, `from`, `to` column maps and a `search` string)
   - `stockit_get_record`
   - `stockit_create_record`
   - `stockit_update_record`
   - `stockit_delete_record`
   - `stockit_import_csv`
+  - `stockit_submit_requisition`
+  - `stockit_decide_approval`
+  - `stockit_create_po_from_requisition`
 - Root `openapi.yaml` maintained as the REST API contract.
+
+Purchase requisition approval:
+
+- A requisition (`purchase_requisitions` + `prq_components`) is drafted, then submitted. Submission prices it from its lines into `prq_total_minor` and creates one pending approval step per active `approval_rules` row whose `apr_min_amount_minor` the total reaches.
+- Each step is decided in `apr_step` order and only by a user whose role matches the step's `apr_role`. A rejection stops the requisition; approving the last step approves it.
+- An approved requisition converts to a draft purchase order with the same lines, and the two records are linked through `purchase_requisitions.por_id`.
+- `approvals` rows are an audit trail: they are written only by these endpoints, never through the generic table API.
 
 Cash-planning base data:
 
@@ -150,12 +163,15 @@ Current REST endpoints:
 - `GET /api/me`
 - `GET /api/tables`
 - `GET /api/tables/{table}/schema`
-- `GET /api/tables/{table}` (supports `?parent_id=<value>` and optional `?parent_field=<column>` for subtables)
+- `GET /api/tables/{table}` (supports `?parent_id=<value>` and optional `?parent_field=<column>` for subtables; `?filter.<column>=`, `?from.<column>=`, `?to.<column>=`, `?q=`)
 - `GET /api/tables/{table}/{id}`
 - `POST /api/tables/{table}`
 - `PUT /api/tables/{table}/{id}`
 - `DELETE /api/tables/{table}/{id}`
 - `POST /api/tables/{table}/import` (multipart `csv_file` upload)
+- `POST /api/purchase_requisitions/{id}/submit`
+- `POST /api/purchase_requisitions/{id}/purchase_order`
+- `POST /api/approvals/{id}/decide`
 
 Current MCP transport:
 

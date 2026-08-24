@@ -18,7 +18,7 @@
       <div class="stockit-brand min-w-0">
         <p class="stockit-brand-mark">StockIt</p>
         <h1 class="stockit-brand-title">Warehouse Control Surface</h1>
-        <p class="stockit-brand-meta truncate">{{ .User.LoginName }} · {{ .User.Role }}</p>
+        <p class="stockit-brand-meta truncate">{{ .Version }}</p>
       </div>
       <nav class="stockit-topnav flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
         {{ range .Tables }}
@@ -30,8 +30,9 @@
         >{{ .Label }}</button>
         {{ end }}
       </nav>
-      <form hx-post="/logout" hx-confirm="Log out?" class="shrink-0">
+      <form hx-post="/logout" hx-confirm="Log out?" class="shrink-0 text-center">
         <button class="stockit-button stockit-button-ghost" type="submit">Logout</button>
+        <p class="stockit-identity-meta truncate">{{ .User.LoginName }} · {{ .User.Role }}</p>
       </form>
     </header>
 

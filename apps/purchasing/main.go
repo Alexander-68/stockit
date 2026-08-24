@@ -25,8 +25,10 @@ const sessionCookie = "stockit_purchasing_session"
 // tableMethods whitelists the StockIt tables this app may touch and with which
 // HTTP methods. StockIt still enforces role permissions behind the proxy.
 var tableMethods = map[string]string{
-	"suppliers":             "GET",
+	"suppliers":             "GET POST PUT DELETE",
 	"items":                 "GET",
+	"quotes":                "GET",
+	"quote_components":      "GET",
 	"purchase_orders":       "GET POST PUT DELETE",
 	"po_components":         "GET POST PUT DELETE",
 	"financial_obligations": "GET POST PUT DELETE",

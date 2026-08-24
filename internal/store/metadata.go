@@ -39,6 +39,9 @@ var (
 		"inactive",
 	}
 	quoteStatusOptions      = []string{"active", "inactive"}
+	requisitionStatuses     = []string{"draft", "submitted", "approved", "rejected", "ordered", "cancelled"}
+	approvalStatuses        = []string{"pending", "approved", "rejected"}
+	approvalSources         = []string{"purchase_requisition"}
 	salesOrderStatusOptions = []string{
 		"confirmed",
 		"preparing",
@@ -641,6 +644,33 @@ func AllTables() map[string]TableDef {
 			Name: "financial_obligations", Label: "Financial Obligation", PrimaryKey: "fob_id", TitleColumn: "fob_label", ReferenceCols: []string{"fob_id", "fob_label", "fob_due_date", "fob_status"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "fob_due_date", ImportEnabled: true,
 			Fields: []Field{
 				{Column: "fob_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "fob_type", Label: "type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationTypes}, {Column: "fob_source_type", Label: "source_type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationSources}, {Column: "fob_source_id", Label: "source_id", Kind: KindInteger, Editable: true, List: true, Sortable: true}, {Column: "fob_label", Label: "label", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_due_date", Label: "due_date", Kind: KindDate, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_amount_minor", Label: "amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_currency", Label: "currency", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "fob_status", Label: "status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationStatuses}, {Column: "fob_counterparty", Label: "counterparty", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "fob_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "purchase_requisitions", Label: "Purchase Requisition", PrimaryKey: "prq_id", TitleColumn: "prq_doc_number", ReferenceCols: []string{"prq_id", "prq_doc_number", "prq_status"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "prq_doc_number", ImportEnabled: true,
+			Subtable: &SubtableDef{Table: "prq_components", ForeignKey: "prq_id", ParentLabel: "Selected Requisition"},
+			Fields: []Field{
+				{Column: "prq_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "prq_doc_number", Label: "doc_number", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "prq_date", Label: "date", Kind: KindDate, Editable: true, List: true, Sortable: true}, {Column: "prq_needed_by", Label: "needed_by", Kind: KindDate, Editable: true, List: true, Sortable: true}, {Column: "prq_department", Label: "department", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "sup_id", Label: "suggested_supplier", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "suppliers"}, {Column: "usr_id", Label: "requester", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "prq_status", Label: "status", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: requisitionStatuses}, {Column: "prq_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "prq_total_minor", Label: "total_minor", Kind: KindInteger, List: true, Sortable: true}, {Column: "por_id", Label: "purchase_order", Kind: KindForeign, List: true, Sortable: true, RefTable: "purchase_orders"}, {Column: "prq_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "prq_components", Label: "Requisition Line", PrimaryKey: "prc_id", TitleColumn: "prc_id", ReferenceCols: []string{"prc_id"}, ParentTable: "purchase_requisitions", ParentField: "prq_id", ParentLabel: "Selected Requisition", ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "prc_id", ImportEnabled: true,
+			Fields: []Field{
+				{Column: "prc_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "prq_id", Label: "requisition", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "purchase_requisitions"}, {Column: "itm_id", Label: "item", Kind: KindForeign, Required: true, Editable: true, List: true, Sortable: true, RefTable: "items"}, {Column: "prc_qty", Label: "qty", Kind: KindReal, Editable: true, List: true, Sortable: true}, {Column: "prc_price", Label: "price", Kind: KindReal, Editable: true, List: true, Sortable: true}, {Column: "prc_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "prc_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			Name: "approval_rules", Label: "Approval Rule", PrimaryKey: "apr_id", TitleColumn: "apr_role", ReferenceCols: []string{"apr_id", "apr_role", "apr_min_amount_minor"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin"}, DefaultSort: "apr_step", ImportEnabled: true,
+			Fields: []Field{
+				{Column: "apr_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apr_source_type", Label: "source_type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: approvalSources}, {Column: "apr_step", Label: "step", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "apr_role", Label: "approver_role", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: roleOptions}, {Column: "apr_min_amount_minor", Label: "min_amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "apr_status", Label: "status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: quoteStatusOptions}, {Column: "apr_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			// Approvals are an audit trail: they are created and decided through the
+			// approval endpoints, never written directly through the table API.
+			Name: "approvals", Label: "Approval", PrimaryKey: "apv_id", TitleColumn: "apv_status", ReferenceCols: []string{"apv_id", "apv_status", "apv_role"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: nil, DefaultSort: "apv_id",
+			Fields: []Field{
+				{Column: "apv_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_source_type", Label: "source_type", Kind: KindEnum, List: true, Sortable: true, Options: approvalSources}, {Column: "apv_source_id", Label: "source_id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_step", Label: "step", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_role", Label: "approver_role", Kind: KindEnum, List: true, Sortable: true, Options: roleOptions}, {Column: "apv_status", Label: "status", Kind: KindEnum, List: true, Sortable: true, Options: approvalStatuses}, {Column: "apv_decided_by", Label: "decided_by", Kind: KindForeign, List: true, Sortable: true, RefTable: "users"}, {Column: "apv_decided_at", Label: "decided_at", Kind: KindText, List: true, Sortable: true}, {Column: "apv_note", Label: "note", Kind: KindTextarea, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
 		},
 		{

@@ -106,12 +106,15 @@ MCP:
  - current tool set:
    - `stockit_list_tables`
    - `stockit_describe_table`
-   - `stockit_list_records` (supports `parent_id` / `parent_field` filters for subtables)
+   - `stockit_list_records` (supports `parent_id` / `parent_field` for subtables, plus `filter`, `from`, `to` column maps and a `search` string)
    - `stockit_get_record`
    - `stockit_create_record`
    - `stockit_update_record`
    - `stockit_delete_record`
    - `stockit_import_csv`
+   - `stockit_submit_requisition`
+   - `stockit_decide_approval`
+   - `stockit_create_po_from_requisition`
 
 
 
@@ -155,6 +158,11 @@ Key Database Schema (SQLite):
 * Purchase Order (POR): por\_id(unique), Suppliers:sup\_id, por\_doc\_number, por\_doc\_date, Items:itm\_id, por\_ship\_date, por\_paid\_date, Users:usr\_id, por\_status (draft, issued, approved, sent, confirmed, paid, prepared, shipped, delivered, received, complete, inactive), por\_note.
 
   * PO components: poc\_id, POR:por\_id, Items:itm\_id, poc\_qty, poc\_price, poc\_currency (USD, TWD, CNY, EUR), poc\_shipped\_date, poc\_delivered\_date, poc\_delivered\_qty, poc\_received\_date, poc\_received\_qty, poc\_iqc\_date, poc\_iqc\_package, poc\_iqc\_qty\_inspected, poc\_iqc\_qty\_accepted, poc\_iqc\_qty\_rejected, Users:usr\_id (poc\_iqc\_person). (ON DELETE POR:por\_id CASCADE)
+* Purchase Requisition (PRQ): prq\_id(unique), prq\_doc\_number, prq\_date, prq\_needed\_by, prq\_department, Suppliers:sup\_id (suggested), Users:usr\_id (requester), prq\_status (draft, submitted, approved, rejected, ordered, cancelled), prq\_currency, prq\_total\_minor (priced on submission), PurchaseOrders:por\_id (set when converted), prq\_note.
+
+  * Requisition components: prc\_id, PRQ:prq\_id, Items:itm\_id, prc\_qty, prc\_price, prc\_currency (USD, TWD, CNY, EUR), prc\_note. (ON DELETE PRQ:prq\_id CASCADE)
+* Approval Rule (APR): apr\_id(unique), apr\_source\_type (purchase\_requisition), apr\_step, apr\_role (admin, user, guest), apr\_min\_amount\_minor, apr\_status (active, inactive), apr\_note. Admin-only writes. A requisition gets one approval step per active rule its total reaches, decided in `apr_step` order.
+* Approval (APV): apv\_id(unique), apv\_source\_type, apv\_source\_id, apv\_step, apv\_role, apv\_status (pending, approved, rejected), Users:apv\_decided\_by, apv\_decided\_at, apv\_note. Audit trail; written only by the approval endpoints, never through the generic table API.
 * Sales Order: sor\_id(unique), Customers:cus\_id, sor\_doc\_number, sor\_doc\_date, sor\_ship\_date, sor\_paid\_date, Users:usr\_id, sor\_status (confirmed, preparing, prepared, shipped, paid, complete, inactive), sor\_note.
 
   * Sales Order components: soc\_id, Sales Order:sor\_id, Items:itm\_id, sor\_qty, sor\_price, sor\_currency (USD, TWD, CNY, EUR), sor\_ship\_date, sor\_shipped\_date, sor\_shipped\_qty, sor\_shipped\_trackno, soc\_note. (ON DELETE Sales Order:sor\_id CASCADE)
@@ -182,3 +190,6 @@ Notes:
 * In web UI column names are shown "human friendly" without leading prefix: address\_en instead of cus\_address\_en.
 * for status fields: Draft, Under Review, Active, Inactive, Hold, Phase-Out, Obsolete.
 * root `openapi.yaml` is the maintained REST API contract.
+* list endpoints filter server-side: `filter.<column>` (equality), `from.<column>` / `to.<column>` (inclusive range), `q` (substring across the table's text columns). Unknown columns are rejected.
+* purchase requisition approval is the one workflow StockIt owns: `POST /api/purchase_requisitions/{id}/submit`, `POST /api/approvals/{id}/decide`, `POST /api/purchase_requisitions/{id}/purchase_order`, each mirrored by an MCP tool. Requisition totals are integer minor units, computed as `round(sum(qty * price) * 100)`.
+* the bundled web UI and every app under `apps/` carry a version stamp formatted `1.0.YYMMDD`, bumped on each code change.

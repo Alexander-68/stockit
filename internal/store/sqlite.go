@@ -30,6 +30,13 @@ type ListOptions struct {
 	Limit  int
 	Offset int
 	Filter map[string]any
+	// From and To bound a column inclusively; both are keyed by column name and
+	// are the server-side replacement for date-range filtering in client apps.
+	From map[string]any
+	To   map[string]any
+	// Search matches a case-insensitive substring in any of SearchColumns.
+	Search        string
+	SearchColumns []string
 }
 
 type ListResult struct {
@@ -141,8 +148,8 @@ func (s *Store) List(ctx context.Context, tableName string, opts ListOptions) (L
 	}
 	slices.Sort(filterColumns)
 
-	whereClauses := make([]string, 0, len(opts.Filter))
-	args := make([]any, 0, len(opts.Filter)+2)
+	whereClauses := make([]string, 0, len(opts.Filter)+len(opts.From)+len(opts.To)+1)
+	args := make([]any, 0, len(opts.Filter)+len(opts.From)+len(opts.To)+len(opts.SearchColumns)+2)
 	for _, column := range filterColumns {
 		value := opts.Filter[column]
 		field, ok := table.Field(column)
@@ -151,6 +158,36 @@ func (s *Store) List(ctx context.Context, tableName string, opts ListOptions) (L
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", quoteIdent(field.Column)))
 		args = append(args, value)
+	}
+	for _, bound := range []struct {
+		values   map[string]any
+		operator string
+	}{{opts.From, ">="}, {opts.To, "<="}} {
+		columns := make([]string, 0, len(bound.values))
+		for column := range bound.values {
+			columns = append(columns, column)
+		}
+		slices.Sort(columns)
+		for _, column := range columns {
+			field, ok := table.Field(column)
+			if !ok {
+				return ListResult{}, fmt.Errorf("unknown filter column %q for table %q", column, tableName)
+			}
+			whereClauses = append(whereClauses, fmt.Sprintf("%s %s ?", quoteIdent(field.Column), bound.operator))
+			args = append(args, bound.values[column])
+		}
+	}
+	if search := strings.TrimSpace(opts.Search); search != "" && len(opts.SearchColumns) > 0 {
+		matches := make([]string, 0, len(opts.SearchColumns))
+		for _, column := range opts.SearchColumns {
+			field, ok := table.Field(column)
+			if !ok {
+				return ListResult{}, fmt.Errorf("unknown search column %q for table %q", column, tableName)
+			}
+			matches = append(matches, fmt.Sprintf(`%s LIKE ? ESCAPE '\'`, quoteIdent(field.Column)))
+			args = append(args, "%"+escapeLike(search)+"%")
+		}
+		whereClauses = append(whereClauses, "("+strings.Join(matches, " OR ")+")")
 	}
 
 	whereSQL := ""
@@ -184,6 +221,13 @@ func (s *Store) List(ctx context.Context, tableName string, opts ListOptions) (L
 		result.Rows = records[:limit]
 	}
 	return result, nil
+}
+
+// escapeLike neutralises the LIKE wildcards so a user search for "50%" does not
+// turn into a match-anything pattern.
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+	return replacer.Replace(value)
 }
 
 func (s *Store) Get(ctx context.Context, tableName string, id string) (map[string]any, error) {
@@ -790,6 +834,59 @@ func (s *Store) init(ctx context.Context) error {
 			usr_id INTEGER,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS purchase_requisitions (
+			prq_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			prq_doc_number TEXT NOT NULL,
+			prq_date TEXT,
+			prq_needed_by TEXT,
+			prq_department TEXT,
+			sup_id INTEGER,
+			usr_id INTEGER,
+			prq_status TEXT,
+			prq_currency TEXT,
+			prq_total_minor INTEGER,
+			por_id INTEGER,
+			prq_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id),
+			FOREIGN KEY (por_id) REFERENCES purchase_orders (por_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS prq_components (
+			prc_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			prq_id INTEGER NOT NULL,
+			itm_id INTEGER NOT NULL,
+			prc_qty REAL,
+			prc_price REAL,
+			prc_currency TEXT,
+			prc_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (prq_id) REFERENCES purchase_requisitions (prq_id) ON DELETE CASCADE,
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS approval_rules (
+			apr_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			apr_source_type TEXT NOT NULL,
+			apr_step INTEGER NOT NULL,
+			apr_role TEXT NOT NULL,
+			apr_min_amount_minor INTEGER NOT NULL,
+			apr_status TEXT NOT NULL,
+			apr_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS approvals (
+			apv_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			apv_source_type TEXT NOT NULL,
+			apv_source_id INTEGER NOT NULL,
+			apv_step INTEGER NOT NULL,
+			apv_role TEXT NOT NULL,
+			apv_status TEXT NOT NULL,
+			apv_decided_by INTEGER,
+			apv_decided_at TEXT,
+			apv_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (apv_decided_by) REFERENCES users (usr_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS bank_transactions (
 			btx_id INTEGER PRIMARY KEY AUTOINCREMENT,
