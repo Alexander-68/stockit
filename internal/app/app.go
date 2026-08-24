@@ -938,6 +938,16 @@ func (s *Server) parseAPIValues(table store.TableDef, payload map[string]any, cr
 			continue
 		}
 
+		// Explicit JSON null on an optional field stores NULL, so clients can
+		// leave a field empty on create and clear it again on update.
+		if rawValue == nil {
+			if field.Required {
+				return nil, fmt.Errorf("%s is required", field.Label)
+			}
+			values[field.Column] = nil
+			continue
+		}
+
 		switch field.Kind {
 		case store.KindInteger, store.KindForeign:
 			switch typed := rawValue.(type) {

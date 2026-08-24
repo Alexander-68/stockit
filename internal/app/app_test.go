@@ -4105,3 +4105,57 @@ func TestAPIRejectsMalformedJSONBodies(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIAcceptsNullForOptionalFieldsAndClearsThem(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	token := apiLogin(t, client, ts.URL, "admin", "admin").Token
+
+	// Create a PO with explicitly null optional dates.
+	create := doAPI(t, client, http.MethodPost, ts.URL+"/api/tables/purchase_orders", token, map[string]any{
+		"por_doc_number": "PO-NULL-1",
+		"por_ship_date":  nil,
+		"por_paid_date":  nil,
+	})
+	if create.StatusCode != http.StatusCreated {
+		t.Fatalf("create with null dates status = %d, want 201, body=%s", create.StatusCode, readBody(t, create.Body))
+	}
+	var created apiTableRowResponse
+	decodeJSON(t, create.Body, &created)
+
+	// Fill the date later.
+	fill := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/purchase_orders/"+created.ID, token, map[string]any{
+		"por_ship_date": "2026-09-01",
+	})
+	if fill.StatusCode != http.StatusOK {
+		t.Fatalf("set ship date status = %d, want 200, body=%s", fill.StatusCode, readBody(t, fill.Body))
+	}
+	var filled apiTableRowResponse
+	decodeJSON(t, fill.Body, &filled)
+	if filled.Row["por_ship_date"] != "2026-09-01" {
+		t.Fatalf("ship date not stored: %v", filled.Row["por_ship_date"])
+	}
+
+	// Clear it again with null.
+	clear := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/purchase_orders/"+created.ID, token, map[string]any{
+		"por_ship_date": nil,
+	})
+	if clear.StatusCode != http.StatusOK {
+		t.Fatalf("clear ship date status = %d, want 200, body=%s", clear.StatusCode, readBody(t, clear.Body))
+	}
+	var cleared apiTableRowResponse
+	decodeJSON(t, clear.Body, &cleared)
+	if cleared.Row["por_ship_date"] != nil {
+		t.Fatalf("ship date not cleared: %v", cleared.Row["por_ship_date"])
+	}
+
+	// Null on a required field is still rejected.
+	nullRequired := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/purchase_orders/"+created.ID, token, map[string]any{
+		"por_doc_number": nil,
+	})
+	if nullRequired.StatusCode != http.StatusBadRequest {
+		t.Fatalf("null required field status = %d, want 400", nullRequired.StatusCode)
+	}
+}
