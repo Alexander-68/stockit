@@ -17,15 +17,15 @@ type apiDecideApprovalRequest struct {
 	Note     string `json:"note"`
 }
 
-type apiCreatePORequest struct {
-	DocNumber  string `json:"por_doc_number"`
-	SupplierID *int64 `json:"sup_id"`
+type apiSetPOStatusRequest struct {
+	Status        string `json:"por_status"`
+	PaymentStatus string `json:"por_payment_status"`
+	Note          string `json:"note"`
 }
 
-type apiCreatePOResponse struct {
-	RequisitionID  int64          `json:"requisition_id"`
-	PurchaseOrder  map[string]any `json:"purchase_order"`
-	PurchaseOrders string         `json:"table"`
+type apiSetPOStatusResponse struct {
+	Table         string         `json:"table"`
+	PurchaseOrder map[string]any `json:"purchase_order"`
 }
 
 // workflowStatus maps store workflow errors onto HTTP status codes so callers
@@ -49,21 +49,6 @@ func parseWorkflowID(raw string) (int64, error) {
 	return id, nil
 }
 
-func (s *Server) apiSubmitRequisition(ctx context.Context, principal Principal, rawID string) (store.RequisitionSubmission, int, error) {
-	if _, status, err := s.resolveTableForRole(principal.Role, "purchase_requisitions", true); err != nil {
-		return store.RequisitionSubmission{}, status, err
-	}
-	id, err := parseWorkflowID(rawID)
-	if err != nil {
-		return store.RequisitionSubmission{}, http.StatusBadRequest, err
-	}
-	result, err := s.store.SubmitRequisition(ctx, id)
-	if err != nil {
-		return store.RequisitionSubmission{}, workflowStatus(err), err
-	}
-	return result, 0, nil
-}
-
 func (s *Server) apiDecideApproval(ctx context.Context, principal Principal, rawID, decision, note string) (store.ApprovalDecision, int, error) {
 	if _, status, err := s.resolveTableForRole(principal.Role, "approvals", false); err != nil {
 		return store.ApprovalDecision{}, status, err
@@ -83,31 +68,54 @@ func (s *Server) apiDecideApproval(ctx context.Context, principal Principal, raw
 	return result, 0, nil
 }
 
-func (s *Server) apiCreatePOFromRequisition(ctx context.Context, principal Principal, rawID, docNumber string, supplierID *int64) (apiCreatePOResponse, int, error) {
-	if _, status, err := s.resolveTableForRole(principal.Role, "purchase_requisitions", true); err != nil {
-		return apiCreatePOResponse{}, status, err
-	}
+func (s *Server) apiSubmitPurchaseOrder(ctx context.Context, principal Principal, rawID string) (store.ApprovalSubmission, int, error) {
 	if _, status, err := s.resolveTableForRole(principal.Role, "purchase_orders", true); err != nil {
-		return apiCreatePOResponse{}, status, err
+		return store.ApprovalSubmission{}, status, err
 	}
 	id, err := parseWorkflowID(rawID)
 	if err != nil {
-		return apiCreatePOResponse{}, http.StatusBadRequest, err
+		return store.ApprovalSubmission{}, http.StatusBadRequest, err
 	}
-	purchaseOrderID, err := s.store.CreatePOFromRequisition(ctx, id, docNumber, supplierID, principal.UserID)
+	result, err := s.store.SubmitPurchaseOrder(ctx, id)
 	if err != nil {
-		return apiCreatePOResponse{}, workflowStatus(err), err
+		return store.ApprovalSubmission{}, workflowStatus(err), err
 	}
-	row, err := s.store.Get(ctx, "purchase_orders", strconv.FormatInt(purchaseOrderID, 10))
-	if err != nil {
-		return apiCreatePOResponse{}, http.StatusInternalServerError, err
-	}
-	return apiCreatePOResponse{RequisitionID: id, PurchaseOrder: row, PurchaseOrders: "purchase_orders"}, 0, nil
+	return result, 0, nil
 }
 
-func (s *Server) handleAPISubmitRequisition(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiSetPOStatus(ctx context.Context, principal Principal, rawID string, payload apiSetPOStatusRequest) (apiSetPOStatusResponse, int, error) {
+	if _, status, err := s.resolveTableForRole(principal.Role, "purchase_orders", true); err != nil {
+		return apiSetPOStatusResponse{}, status, err
+	}
+	id, err := parseWorkflowID(rawID)
+	if err != nil {
+		return apiSetPOStatusResponse{}, http.StatusBadRequest, err
+	}
+	row, err := s.store.SetPOStatus(ctx, id, payload.Status, payload.PaymentStatus, payload.Note)
+	if err != nil {
+		return apiSetPOStatusResponse{}, workflowStatus(err), err
+	}
+	return apiSetPOStatusResponse{Table: "purchase_orders", PurchaseOrder: row}, 0, nil
+}
+
+func (s *Server) handleAPISubmitPurchaseOrder(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	result, status, err := s.apiSubmitRequisition(r.Context(), principal, r.PathValue("id"))
+	result, status, err := s.apiSubmitPurchaseOrder(r.Context(), principal, r.PathValue("id"))
+	if err != nil {
+		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleAPISetPOStatus(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	var payload apiSetPOStatusRequest
+	if err := json.UnmarshalRead(r.Body, &payload); err != nil {
+		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid JSON body"})
+		return
+	}
+	result, status, err := s.apiSetPOStatus(r.Context(), principal, r.PathValue("id"), payload)
 	if err != nil {
 		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
 		return
@@ -128,21 +136,4 @@ func (s *Server) handleAPIDecideApproval(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) handleAPICreatePOFromRequisition(w http.ResponseWriter, r *http.Request) {
-	principal := principalFromContext(r.Context())
-	payload := apiCreatePORequest{}
-	if r.ContentLength > 0 {
-		if err := json.UnmarshalRead(r.Body, &payload); err != nil {
-			s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid JSON body"})
-			return
-		}
-	}
-	result, status, err := s.apiCreatePOFromRequisition(r.Context(), principal, r.PathValue("id"), payload.DocNumber, payload.SupplierID)
-	if err != nil {
-		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
-		return
-	}
-	s.writeJSON(w, http.StatusCreated, result)
 }

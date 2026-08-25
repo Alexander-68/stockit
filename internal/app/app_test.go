@@ -3002,10 +3002,6 @@ func idColumn(table string) string {
 		return "boc_id"
 	case "purchase_orders":
 		return "por_id"
-	case "purchase_requisitions":
-		return "prq_id"
-	case "prq_components":
-		return "prc_id"
 	case "approval_rules":
 		return "apr_id"
 	case "approvals":

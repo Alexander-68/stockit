@@ -14,23 +14,23 @@ func TestMCPApprovalToolsAndListFilters(t *testing.T) {
 	sessionID := initMCPSession(t, client, ts.URL, loginResp.Token)
 
 	tools := mcpListTools(t, client, ts.URL, loginResp.Token, sessionID)
-	for _, name := range []string{mcpToolSubmitRequisition, mcpToolDecideApproval, mcpToolRequisitionToPO} {
+	for _, name := range []string{mcpToolSubmitPO, mcpToolDecideApproval, mcpToolSetPOStatus} {
 		if !slices.Contains(tools, name) {
 			t.Fatalf("admin tools/list missing %q: %v", name, tools)
 		}
 	}
 
 	createRecord(t, client, loginResp.Token, ts.URL, "approval_rules", map[string]any{
-		"apr_source_type": "purchase_requisition", "apr_step": 1, "apr_role": "admin",
+		"apr_source_type": "purchase_order", "apr_step": 1, "apr_role": "admin",
 		"apr_min_amount_minor": 10_000, "apr_status": "active",
 	})
-	requisition := seedApprovalFixture(t, client, loginResp.Token, ts.URL, 250)
+	purchaseOrder := seedApprovalFixture(t, client, loginResp.Token, ts.URL, "RV-MCP-PO", 250)
 
-	submitResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolSubmitRequisition, map[string]any{
-		"requisition_id": requisition,
+	submitResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolSubmitPO, map[string]any{
+		"purchase_order_id": purchaseOrder,
 	})
 	submission, ok := submitResult["structuredContent"].(map[string]any)
-	if !ok || submission["status"] != "submitted" {
+	if !ok || submission["status"] != "pending_approval" {
 		t.Fatalf("submit tool payload unexpected: %+v", submitResult)
 	}
 	approvals, ok := submission["approvals"].([]any)
@@ -43,20 +43,21 @@ func TestMCPApprovalToolsAndListFilters(t *testing.T) {
 		"approval_id": approvalID, "decision": "approved",
 	})
 	decision, ok := decideResult["structuredContent"].(map[string]any)
-	if !ok || decision["requisition_status"] != "approved" {
+	if !ok || decision["status"] != "approved" {
 		t.Fatalf("decide tool payload unexpected: %+v", decideResult)
 	}
 
-	poResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolRequisitionToPO, map[string]any{
-		"requisition_id": requisition, "por_doc_number": "RV-MCP-PO",
+	statusResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolSetPOStatus, map[string]any{
+		"purchase_order_id": purchaseOrder, "por_status": "issued",
+		"por_payment_status": "partially_paid", "note": "deposit wired",
 	})
-	poPayload, ok := poResult["structuredContent"].(map[string]any)
+	statusPayload, ok := statusResult["structuredContent"].(map[string]any)
 	if !ok {
-		t.Fatalf("purchase order tool payload unexpected: %+v", poResult)
+		t.Fatalf("status tool payload unexpected: %+v", statusResult)
 	}
-	purchaseOrder := poPayload["purchase_order"].(map[string]any)
-	if purchaseOrder["por_doc_number"] != "RV-MCP-PO" {
-		t.Fatalf("purchase order not created from requisition: %+v", purchaseOrder)
+	changed := statusPayload["purchase_order"].(map[string]any)
+	if changed["por_status"] != "issued" || changed["por_payment_status"] != "partially_paid" {
+		t.Fatalf("status tool did not apply the change: %+v", changed)
 	}
 
 	filtered := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolListRecords, map[string]any{

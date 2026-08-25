@@ -57,14 +57,20 @@ func newFakeStockIt(t *testing.T) *httptest.Server {
 				t.Errorf("create payload not forwarded: %s", payload)
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{"table": "purchase_orders", "row": map[string]any{"por_id": 7, "por_doc_number": "PO-1"}})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/purchase_requisitions/7/submit":
-			writeJSON(w, http.StatusOK, map[string]any{"requisition_id": 7, "status": "submitted"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/purchase_orders/9/submit":
+			writeJSON(w, http.StatusOK, map[string]any{"source_id": 9, "status": "pending_approval"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/purchase_orders/9/status":
+			payload, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(payload), "issued") {
+				t.Errorf("status change not forwarded: %s", payload)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"table": "purchase_orders"})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/approvals/3/decide":
 			payload, _ := io.ReadAll(r.Body)
 			if !strings.Contains(string(payload), "approved") {
 				t.Errorf("decision not forwarded: %s", payload)
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"requisition_status": "approved"})
+			writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/tables/po_components":
 			if r.URL.Query().Get("parent_id") != "7" {
 				t.Errorf("parent_id query not forwarded: %s", r.URL.RawQuery)
@@ -184,15 +190,6 @@ func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
 	defer appServer.Close()
 	client := loggedInClient(t, appServer)
 
-	submit, err := client.Post(appServer.URL+"/api/purchase_requisitions/7/submit", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = submit.Body.Close()
-	if submit.StatusCode != http.StatusOK {
-		t.Fatalf("submit returned %d, want 200", submit.StatusCode)
-	}
-
 	decide, err := client.Post(appServer.URL+"/api/approvals/3/decide", "application/json", strings.NewReader(`{"decision":"approved"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +197,26 @@ func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
 	_ = decide.Body.Close()
 	if decide.StatusCode != http.StatusOK {
 		t.Fatalf("decide returned %d, want 200", decide.StatusCode)
+	}
+
+	for _, action := range []string{"submit", "status"} {
+		response, err := client.Post(appServer.URL+"/api/purchase_orders/9/"+action, "application/json", strings.NewReader(`{"por_status":"issued"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("purchase order %s returned %d, want 200", action, response.StatusCode)
+		}
+	}
+
+	blockedPO, err := client.Post(appServer.URL+"/api/purchase_orders/9/cancel", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = blockedPO.Body.Close()
+	if blockedPO.StatusCode != http.StatusForbidden {
+		t.Fatalf("unlisted purchase order action returned %d, want 403", blockedPO.StatusCode)
 	}
 
 	blocked, err := client.Post(appServer.URL+"/api/approvals/3/delete", "application/json", nil)
@@ -211,7 +228,7 @@ func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
 		t.Fatalf("unlisted workflow action returned %d, want 403", blocked.StatusCode)
 	}
 
-	anonymous, err := http.Post(appServer.URL+"/api/purchase_requisitions/7/submit", "application/json", nil)
+	anonymous, err := http.Post(appServer.URL+"/api/purchase_orders/9/submit", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

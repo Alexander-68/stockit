@@ -8,7 +8,7 @@ info:
     The REST API and MCP tools are intentionally aligned: table catalog/schema discovery,
     record list/get/create/update/delete, and shared session authentication. MCP transport is
     documented in README.md and StokIt_Specification.md rather than OpenAPI.
-    StockIt owns one workflow: purchase requisition approval. Requisitions are priced from
+    StockIt owns one workflow: purchase order approval. Orders are priced from
     their lines, routed through value-based approval rules, and converted to purchase orders
     (see the Approvals tag). Client applications still own import, calculation, forecasting,
     consistency-check, and UI workflows.
@@ -296,71 +296,17 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /api/purchase_requisitions/{id}/submit:
-    post:
-      tags: [Approvals]
-      summary: Submit a draft requisition for approval
-      description: |
-        Prices the requisition from its lines, stores the total in
-        `prq_total_minor`, and creates one pending approval step per active
-        approval rule whose `apr_min_amount_minor` the total reaches. A
-        requisition that matches no rule is approved outright. Only a draft
-        requisition with at least one line can be submitted.
-      parameters:
-        - $ref: '#/components/parameters/RecordID'
-      responses:
-        '200':
-          description: Submission result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RequisitionSubmission'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /api/purchase_requisitions/{id}/purchase_order:
-    post:
-      tags: [Approvals]
-      summary: Create a draft purchase order from an approved requisition
-      parameters:
-        - $ref: '#/components/parameters/RecordID'
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                por_doc_number:
-                  type: string
-                  description: Defaults to the requisition document number.
-                sup_id:
-                  type: integer
-                  description: Defaults to the requisition's suggested supplier.
-      responses:
-        '201':
-          description: Created purchase order
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RequisitionPurchaseOrder'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+
+
   /api/approvals/{id}/decide:
     post:
       tags: [Approvals]
       summary: Approve or reject one pending approval step
       description: |
         Steps are decided in order and only by a user whose role matches the
-        step's `apv_role`. A rejection sets the requisition to `rejected`;
-        approving the last pending step sets it to `approved`.
+        step's `apv_role`. A rejection sets the purchase order to `rejected`;
+        approving the last pending step sets it to `approved`. Both moves are
+        appended to `po_status_history`.
       parameters:
         - $ref: '#/components/parameters/RecordID'
       requestBody:
@@ -383,6 +329,74 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApprovalDecision'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/purchase_orders/{id}/submit:
+    post:
+      tags: [Approvals]
+      summary: Submit a draft purchase order for approval
+      description: |
+        Prices the purchase order from its lines, stores the total in
+        `por_total_minor`, and creates one pending approval step per active
+        approval rule with `apr_source_type = purchase_order` whose
+        `apr_min_amount_minor` the total reaches. An order that matches no rule
+        is approved outright. Only a draft order with at least one line can be
+        submitted; the status moves to `pending_approval`, then `approved` or
+        `rejected`. Every one of those moves is appended to `po_status_history`.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          description: Submission result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalSubmission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/purchase_orders/{id}/status:
+    post:
+      tags: [Approvals]
+      summary: Change a purchase order's status or payment tag with a note
+      description: |
+        Records the change in `po_status_history` together with the acting user,
+        the timestamp and the note. Transitions are unrestricted by design: the
+        history is the control, not a state machine. Send only the field you
+        want to change; an empty value leaves that field alone. Status changes
+        made through `PUT /api/tables/purchase_orders/{id}` are recorded too,
+        but with no note.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                por_status:
+                  type: string
+                  enum: [draft, pending_approval, approved, rejected, issued, confirmed, partially_received, received, invoiced, closed, on_hold, pending_revision, cancelled]
+                por_payment_status:
+                  type: string
+                  enum: [unpaid, partially_paid, paid, refunded]
+                note:
+                  type: string
+      responses:
+        '200':
+          description: Updated purchase order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrderStatusChange'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -431,10 +445,9 @@ components:
           - designation_codes
           - financial_obligations
           - bank_transactions
-          - purchase_requisitions
-          - prq_components
           - approval_rules
           - approvals
+          - po_status_history
     RecordID:
       name: id
       in: path
@@ -542,18 +555,31 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
-    RequisitionSubmission:
+    PurchaseOrderStatusChange:
       type: object
-      required: [requisition_id, status, total_minor, approvals]
+      required: [table, purchase_order]
       properties:
-        requisition_id:
+        table:
+          type: string
+          enum: [purchase_orders]
+        purchase_order:
+          type: object
+          additionalProperties: true
+    ApprovalSubmission:
+      type: object
+      required: [source_type, source_id, status, total_minor, approvals]
+      properties:
+        source_type:
+          type: string
+          enum: [purchase_order]
+        source_id:
           type: integer
         status:
           type: string
-          enum: [submitted, approved]
+          enum: [pending_approval, approved]
         total_minor:
           type: integer
-          description: Requisition value in integer minor units, priced from its lines.
+          description: Purchase order value in integer minor units, priced from its lines.
         currency:
           type: string
         approvals:
@@ -564,203 +590,22 @@ components:
             additionalProperties: true
     ApprovalDecision:
       type: object
-      required: [approval, requisition_id, requisition_status, remaining_approvals]
+      required: [approval, source_type, source_id, status, remaining_approvals]
       properties:
         approval:
           type: object
           additionalProperties: true
-        requisition_id:
-          type: integer
-        requisition_status:
+        source_type:
           type: string
-          enum: [submitted, approved, rejected]
+          enum: [purchase_order]
+        source_id:
+          type: integer
+        status:
+          type: string
+          description: Lifecycle status of the purchase order after the decision.
+          enum: [pending_approval, approved, rejected]
         remaining_approvals:
           type: integer
-    RequisitionPurchaseOrder:
-      type: object
-      required: [requisition_id, purchase_order, table]
-      properties:
-        requisition_id:
-          type: integer
-        purchase_order:
-          type: object
-          additionalProperties: true
-        table:
-          type: string
-    LoginRequest:
-      type: object
-      additionalProperties: false
-      required: [login_name, password]
-      properties:
-        login_name:
-          type: string
-        password:
-          type: string
-    LoginResponse:
-      type: object
-      additionalProperties: false
-      required: [token, token_type, user, role, session_idle_timeout_seconds]
-      properties:
-        token:
-          type: string
-        token_type:
-          type: string
-          enum: [Bearer]
-        user:
-          type: string
-        role:
-          type: string
-          enum: [admin, user, guest]
-        session_idle_timeout_seconds:
-          type: integer
-    MeResponse:
-      type: object
-      additionalProperties: false
-      required: [user, role]
-      properties:
-        user:
-          type: string
-        role:
-          type: string
-          enum: [admin, user, guest]
-    ErrorResponse:
-      type: object
-      additionalProperties: false
-      required: [error]
-      properties:
-        error:
-          type: string
-    TableSummary:
-      type: object
-      additionalProperties: false
-      required: [name, label, primary_key, default_sort, can_write, is_subtable]
-      properties:
-        name:
-          type: string
-        label:
-          type: string
-        primary_key:
-          type: string
-        default_sort:
-          type: string
-        can_write:
-          type: boolean
-        is_subtable:
-          type: boolean
-        parent_table:
-          type: string
-        parent_field:
-          type: string
-    TableCatalogResponse:
-      type: object
-      additionalProperties: false
-      required: [tables]
-      properties:
-        tables:
-          type: array
-          items:
-            $ref: '#/components/schemas/TableSummary'
-    TableField:
-      type: object
-      additionalProperties: false
-      required: [column, label, kind, required, editable, list, sortable]
-      properties:
-        column:
-          type: string
-        label:
-          type: string
-        kind:
-          type: string
-        required:
-          type: boolean
-        editable:
-          type: boolean
-        list:
-          type: boolean
-        sortable:
-          type: boolean
-        options:
-          type: array
-          items:
-            type: string
-        ref_table:
-          type: string
-        accept:
-          type: string
-        placeholder:
-          type: string
-    TableSchema:
-      type: object
-      additionalProperties: false
-      required:
-        [name, label, primary_key, title_column, default_sort, default_desc, can_write, import_enabled, is_subtable, fields]
-      properties:
-        name:
-          type: string
-        label:
-          type: string
-        primary_key:
-          type: string
-        title_column:
-          type: string
-        default_sort:
-          type: string
-        default_desc:
-          type: boolean
-        can_write:
-          type: boolean
-        import_enabled:
-          type: boolean
-        is_subtable:
-          type: boolean
-        parent_table:
-          type: string
-        parent_field:
-          type: string
-        parent_label:
-          type: string
-        fields:
-          type: array
-          items:
-            $ref: '#/components/schemas/TableField'
-    TableSchemaResponse:
-      type: object
-      additionalProperties: false
-      required: [table]
-      properties:
-        table:
-          $ref: '#/components/schemas/TableSchema'
-    RecordWriteRequest:
-      type: object
-      description: |
-        Field names are table-specific. Unknown fields and values with invalid types are rejected.
-        Password fields accept plain text and are stored as Argon2id hashes.
-      additionalProperties: true
-    Record:
-      type: object
-      additionalProperties: true
-    TableRowsResponse:
-      type: object
-      additionalProperties: false
-      required: [table, rows, has_more]
-      properties:
-        table:
-          type: string
-        rows:
-          type: array
-          items:
-            $ref: '#/components/schemas/Record'
-        has_more:
-          type: boolean
-    TableRowResponse:
-      type: object
-      additionalProperties: false
-      required: [table, row]
-      properties:
-        table:
-          type: string
-        row:
-          $ref: '#/components/schemas/Record'
     TableImportResponse:
       type: object
       additionalProperties: false

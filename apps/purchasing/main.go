@@ -30,9 +30,9 @@ var tableMethods = map[string]string{
 	"quotes":                "GET",
 	"quote_components":      "GET",
 	"purchase_orders":       "GET POST PUT DELETE",
-	"purchase_requisitions": "GET POST PUT DELETE",
-	"prq_components":        "GET POST PUT DELETE",
 	"approvals":             "GET",
+	"approval_rules":        "GET",
+	"po_status_history":     "GET",
 	"po_components":         "GET POST PUT DELETE",
 	"financial_obligations": "GET POST PUT DELETE",
 }
@@ -56,9 +56,9 @@ type session struct {
 // workflowActions whitelists the StockIt approval endpoints this app may call.
 // Each entry is "<collection>/<action>"; StockIt still enforces role and state.
 var workflowActions = map[string]bool{
-	"purchase_requisitions/submit":         true,
-	"purchase_requisitions/purchase_order": true,
-	"approvals/decide":                     true,
+	"purchase_orders/submit": true,
+	"purchase_orders/status": true,
+	"approvals/decide":       true,
 }
 
 type loginRequest struct {
@@ -103,7 +103,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /logout", a.handleLogout)
 	mux.HandleFunc("GET /api/me", a.handleMe)
 	mux.HandleFunc("/api/tables/", a.handleProxy)
-	mux.HandleFunc("POST /api/purchase_requisitions/{id}/{action}", a.handleWorkflowProxy)
+	mux.HandleFunc("POST /api/purchase_orders/{id}/{action}", a.handleWorkflowProxy)
 	mux.HandleFunc("POST /api/approvals/{id}/{action}", a.handleWorkflowProxy)
 	return mux
 }

@@ -291,7 +291,25 @@ func (s *Store) Insert(ctx context.Context, tableName string, values map[string]
 	if err != nil {
 		return 0, fmt.Errorf("insert row: %w", err)
 	}
-	return result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, s.afterWrite(ctx, table.Name, strconv.FormatInt(id, 10), poStatusSnapshot{})
+}
+
+// afterWrite keeps the purchase-order audit trail and the derived receipt status
+// in step with whatever a generic table write just changed. It is called from
+// Insert/Update/Delete so every surface (web UI, REST API, MCP, CSV import)
+// records the same history without repeating itself.
+func (s *Store) afterWrite(ctx context.Context, tableName, id string, before poStatusSnapshot) error {
+	switch tableName {
+	case "purchase_orders":
+		return s.recordPOStatusChange(ctx, id, before, "")
+	case "po_components":
+		return s.syncPOReceiptStatus(ctx, s.componentParentID(ctx, id))
+	}
+	return nil
 }
 
 func (s *Store) Update(ctx context.Context, tableName string, id string, values map[string]any) error {
@@ -313,6 +331,11 @@ func (s *Store) Update(ctx context.Context, tableName string, id string, values 
 	}
 	args = append(args, id)
 
+	var before poStatusSnapshot
+	if table.Name == "purchase_orders" {
+		before, _ = s.purchaseOrderSnapshot(ctx, id)
+	}
+
 	query := fmt.Sprintf(
 		`UPDATE %s SET %s WHERE %s = ?`,
 		quoteIdent(table.Name),
@@ -327,13 +350,18 @@ func (s *Store) Update(ctx context.Context, tableName string, id string, values 
 	if err == nil && rowsAffected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return s.afterWrite(ctx, table.Name, id, before)
 }
 
 func (s *Store) Delete(ctx context.Context, tableName string, id string) error {
 	table, ok := s.Table(tableName)
 	if !ok {
 		return fmt.Errorf("unknown table %q", tableName)
+	}
+
+	parentPO := ""
+	if table.Name == "po_components" {
+		parentPO = s.componentParentID(ctx, id)
 	}
 
 	query := fmt.Sprintf(`DELETE FROM %s WHERE %s = ?`, quoteIdent(table.Name), quoteIdent(table.PrimaryKey))
@@ -345,7 +373,7 @@ func (s *Store) Delete(ctx context.Context, tableName string, id string) error {
 	if err == nil && rowsAffected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return s.syncPOReceiptStatus(ctx, parentPO)
 }
 
 func (s *Store) CountAdmins(ctx context.Context) (int, error) {
@@ -612,6 +640,9 @@ func (s *Store) init(ctx context.Context) error {
 			por_paid_date TEXT,
 			usr_id INTEGER,
 			por_status TEXT,
+			por_payment_status TEXT,
+			por_currency TEXT,
+			por_total_minor INTEGER,
 			por_note TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
@@ -835,36 +866,6 @@ func (s *Store) init(ctx context.Context) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
 		);`,
-		`CREATE TABLE IF NOT EXISTS purchase_requisitions (
-			prq_id INTEGER PRIMARY KEY AUTOINCREMENT,
-			prq_doc_number TEXT NOT NULL,
-			prq_date TEXT,
-			prq_needed_by TEXT,
-			prq_department TEXT,
-			sup_id INTEGER,
-			usr_id INTEGER,
-			prq_status TEXT,
-			prq_currency TEXT,
-			prq_total_minor INTEGER,
-			por_id INTEGER,
-			prq_note TEXT,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
-			FOREIGN KEY (usr_id) REFERENCES users (usr_id),
-			FOREIGN KEY (por_id) REFERENCES purchase_orders (por_id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS prq_components (
-			prc_id INTEGER PRIMARY KEY AUTOINCREMENT,
-			prq_id INTEGER NOT NULL,
-			itm_id INTEGER NOT NULL,
-			prc_qty REAL,
-			prc_price REAL,
-			prc_currency TEXT,
-			prc_note TEXT,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (prq_id) REFERENCES purchase_requisitions (prq_id) ON DELETE CASCADE,
-			FOREIGN KEY (itm_id) REFERENCES items (itm_id)
-		);`,
 		`CREATE TABLE IF NOT EXISTS approval_rules (
 			apr_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			apr_source_type TEXT NOT NULL,
@@ -887,6 +888,18 @@ func (s *Store) init(ctx context.Context) error {
 			apv_note TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (apv_decided_by) REFERENCES users (usr_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS po_status_history (
+			psh_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			por_id INTEGER NOT NULL,
+			psh_previous_status TEXT,
+			psh_status TEXT NOT NULL,
+			psh_payment_status TEXT,
+			usr_id INTEGER,
+			psh_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (por_id) REFERENCES purchase_orders (por_id) ON DELETE CASCADE,
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS bank_transactions (
 			btx_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -915,6 +928,10 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
+	if err := s.dropPurchaseRequisitions(ctx); err != nil {
+		return err
+	}
+
 	if err := s.ensureColumn(ctx, "boms", "bom_doc_date", "TEXT"); err != nil {
 		return err
 	}
@@ -938,6 +955,9 @@ func (s *Store) init(ctx context.Context) error {
 		{table: "po_components", column: "poc_iqc_qty_accepted", def: "REAL"},
 		{table: "po_components", column: "poc_iqc_qty_rejected", def: "REAL"},
 		{table: "po_components", column: "poc_iqc_person", def: "INTEGER"},
+		{table: "purchase_orders", column: "por_payment_status", def: "TEXT"},
+		{table: "purchase_orders", column: "por_currency", def: "TEXT"},
+		{table: "purchase_orders", column: "por_total_minor", def: "INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.def); err != nil {
 			return err
@@ -945,6 +965,10 @@ func (s *Store) init(ctx context.Context) error {
 	}
 
 	if err := s.renameStatusValue(ctx, "Absolete", "Obsolete"); err != nil {
+		return err
+	}
+
+	if err := s.migratePOStatuses(ctx); err != nil {
 		return err
 	}
 
@@ -975,6 +999,126 @@ func (s *Store) renameStatusValue(ctx context.Context, oldValue, newValue string
 		if _, err := s.db.ExecContext(ctx, query, newValue, oldValue); err != nil {
 			return fmt.Errorf("rename status value in %s.%s: %w", c.table, c.column, err)
 		}
+	}
+	return nil
+}
+
+// dropPurchaseRequisitions removes the purchase requisition tables and the
+// purchase_orders.prq_id link from databases written before requisitions were
+// retired. purchase_orders has to be rebuilt because SQLite refuses to drop a
+// column that a foreign key clause names, and the parent table cannot be
+// dropped while that column still holds matching values.
+func (s *Store) dropPurchaseRequisitions(ctx context.Context) error {
+	linked, err := s.hasColumn(ctx, "purchase_orders", "prq_id")
+	if err != nil {
+		return err
+	}
+	if linked {
+		if err := s.rebuildPurchaseOrdersWithoutRequisitionLink(ctx); err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"prq_components", "purchase_requisitions"} {
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, quoteIdent(table))); err != nil {
+			return fmt.Errorf("drop %s: %w", table, err)
+		}
+	}
+	// Approval rules and steps that routed requisitions no longer have a source.
+	for _, statement := range []string{
+		`DELETE FROM approvals WHERE apv_source_type = 'purchase_requisition'`,
+		`DELETE FROM approval_rules WHERE apr_source_type = 'purchase_requisition'`,
+	} {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("clear requisition approvals: %w", err)
+		}
+	}
+	return nil
+}
+
+// rebuildPurchaseOrdersWithoutRequisitionLink copies purchase_orders into a
+// table built from the current schema, carrying over every column the two share.
+func (s *Store) rebuildPurchaseOrdersWithoutRequisitionLink(ctx context.Context) error {
+	table, ok := s.Table("purchase_orders")
+	if !ok {
+		return fmt.Errorf("purchase_orders is not a known table")
+	}
+	shared := make([]string, 0, len(table.Fields))
+	for _, field := range table.Fields {
+		exists, err := s.hasColumn(ctx, "purchase_orders", field.Column)
+		if err != nil {
+			return err
+		}
+		if exists {
+			shared = append(shared, field.Column)
+		}
+	}
+
+	// Foreign keys stay off for the swap: po_components and stock_moves point at
+	// purchase_orders and must survive the drop, and the rename reattaches them.
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys: %w", err)
+	}
+	defer func() { _, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`) }()
+
+	for _, statement := range []string{
+		`CREATE TABLE purchase_orders_rebuilt (
+			por_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sup_id INTEGER,
+			por_doc_number TEXT NOT NULL,
+			por_doc_date TEXT,
+			itm_id INTEGER,
+			por_ship_date TEXT,
+			por_paid_date TEXT,
+			usr_id INTEGER,
+			por_status TEXT,
+			por_payment_status TEXT,
+			por_currency TEXT,
+			por_total_minor INTEGER,
+			por_note TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (sup_id) REFERENCES suppliers (sup_id),
+			FOREIGN KEY (itm_id) REFERENCES items (itm_id),
+			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
+		);`,
+		fmt.Sprintf(`INSERT INTO purchase_orders_rebuilt (%s) SELECT %s FROM purchase_orders`,
+			joinQuoted(shared), joinQuoted(shared)),
+		`DROP TABLE purchase_orders`,
+		`ALTER TABLE purchase_orders_rebuilt RENAME TO purchase_orders`,
+	} {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("rebuild purchase_orders: %w", err)
+		}
+	}
+	return nil
+}
+
+// migratePOStatuses rewrites the pre-lifecycle purchase-order statuses onto the
+// current set and backfills the payment tag, so databases written before the
+// lifecycle statuses landed still validate against the enum.
+func (s *Store) migratePOStatuses(ctx context.Context) error {
+	// "paid" carried both meanings; it becomes a closed order tagged paid.
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE purchase_orders SET por_payment_status = 'paid' WHERE por_status = 'paid'`); err != nil {
+		return fmt.Errorf("backfill purchase order payment status: %w", err)
+	}
+	for _, rename := range []struct{ from, to string }{
+		{from: "sent", to: "issued"},
+		{from: "prepared", to: "confirmed"},
+		{from: "shipped", to: "confirmed"},
+		{from: "delivered", to: "received"},
+		{from: "paid", to: "closed"},
+		{from: "complete", to: "closed"},
+		{from: "inactive", to: "cancelled"},
+	} {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE purchase_orders SET por_status = ? WHERE por_status = ?`, rename.to, rename.from); err != nil {
+			return fmt.Errorf("migrate purchase order status %q: %w", rename.from, err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE purchase_orders SET por_payment_status = 'unpaid'
+		WHERE por_payment_status IS NULL OR TRIM(por_payment_status) = ''`); err != nil {
+		return fmt.Errorf("default purchase order payment status: %w", err)
 	}
 	return nil
 }

@@ -54,7 +54,7 @@
 <body class="stockit-app-shell">
   <header>
     <div><h1>Purchasing</h1><p class="version" id="version"></p></div>
-    <nav id="nav" class="controls hidden"><button data-view="list" type="button">Purchase orders</button><button data-view="requisitions" type="button">Requisitions</button><button data-view="suppliers" type="button">Suppliers</button></nav>
+    <nav id="nav" class="controls hidden"><button data-view="list" type="button">Purchase orders</button><button data-view="suppliers" type="button">Suppliers</button></nav>
     <div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div>
   </header>
 
@@ -79,6 +79,7 @@
       <label>Doc date to<input id="filter-to" type="date"></label>
       <label>Supplier<select id="filter-supplier"></select></label>
       <label>Status<select id="filter-status"></select></label>
+      <label>Payment<select id="filter-payment"></select></label>
       <label>Search<input id="filter-search" type="search" placeholder="doc number or note"></label>
     </div>
     <div class="controls"><button id="filter-reset" class="secondary" type="button">Reset filters</button><span id="list-count" class="muted"></span></div>
@@ -96,11 +97,27 @@
           <label>Doc date<input name="por_doc_date" type="date"></label>
           <label>Ship date<input name="por_ship_date" type="date"></label>
           <label>Paid date<input name="por_paid_date" type="date"></label>
-          <label>Status<select name="por_status" id="status-select"></select></label>
+          <label>Currency<select name="por_currency" class="currency-select"></select></label>
         </div>
         <label>Note<textarea name="por_note" rows="2"></textarea></label>
         <div class="controls" style="margin-top:.75rem"><button>Save order</button><span id="duplicate-note" class="muted" style="margin:0"></span><span id="edit-error" class="error" style="margin:0"></span></div>
       </form>
+    </section>
+
+    <section id="po-status-section" class="hidden">
+      <div class="section-head"><h2>Status, approvals &amp; payment</h2><span id="po-status-label" class="muted"></span></div>
+      <form id="po-status-form">
+        <div class="grid">
+          <label>Status<select name="por_status" id="status-select"></select></label>
+          <label>Payment<select name="por_payment_status" id="payment-select"></select></label>
+          <label>Note<input name="note" placeholder="Why the status changed"></label>
+        </div>
+        <div class="controls" style="margin-top:.75rem"><button>Apply status change</button><button id="submit-po" class="secondary hidden" type="button">Submit for approval</button><span id="po-status-error" class="error" style="margin:0"></span></div>
+      </form>
+      <div id="po-approvals"></div>
+      <p id="po-approvals-error" class="error"></p>
+      <div class="section-head" style="margin-top:1rem"><h2>Status history</h2><span id="po-history-count" class="muted"></span></div>
+      <div id="po-history"></div>
     </section>
 
     <section id="lines-section" class="hidden">
@@ -135,63 +152,6 @@
         </tr></tbody></table>
       </form>
       <p id="schedule-error" class="error"></p>
-    </section>
-  </main>
-
-  <section id="requisitions-view" class="hidden">
-    <div class="section-head"><h2>Purchase requisitions</h2><div class="controls"><button id="new-requisition" type="button">New requisition</button><button id="reload-requisitions" class="secondary" type="button">Refresh</button></div></div>
-    <div class="filters">
-      <label>Date from<input id="requisition-from" type="date"></label>
-      <label>Date to<input id="requisition-to" type="date"></label>
-      <label>Status<select id="requisition-status"></select></label>
-      <label>Search<input id="requisition-search" type="search" placeholder="doc number or note"></label>
-    </div>
-    <div class="controls"><button id="requisition-reset" class="secondary" type="button">Reset filters</button><span id="requisition-count" class="muted"></span></div>
-    <p id="requisition-list-error" class="error"></p>
-    <div id="requisition-table"></div>
-  </section>
-
-  <main id="requisition-edit-view" class="hidden">
-    <section>
-      <div class="section-head"><h2 id="requisition-title">New requisition</h2><div class="controls">
-        <button id="requisition-back" class="secondary" type="button">Back to list</button>
-        <button id="submit-requisition" class="hidden" type="button">Submit for approval</button>
-        <button id="requisition-to-po" class="hidden" type="button">Create purchase order</button>
-        <button id="delete-requisition" class="danger hidden" type="button">Delete requisition</button>
-      </div></div>
-      <form id="requisition-form">
-        <div class="grid">
-          <label>Doc number<input name="prq_doc_number" required></label>
-          <label>Date<input name="prq_date" type="date"></label>
-          <label>Needed by<input name="prq_needed_by" type="date"></label>
-          <label>Department<input name="prq_department"></label>
-          <label>Suggested supplier<select name="sup_id" id="requisition-supplier"></select></label>
-          <label>Currency<select name="prq_currency" class="currency-select"></select></label>
-        </div>
-        <label>Note<textarea name="prq_note" rows="2"></textarea></label>
-        <div class="controls" style="margin-top:.75rem"><button>Save requisition</button><span id="requisition-status-label" class="muted"></span><span id="requisition-error" class="error" style="margin:0"></span></div>
-      </form>
-    </section>
-
-    <section id="requisition-lines-section" class="hidden">
-      <div class="section-head"><h2>Requisition lines</h2><span id="requisition-totals" class="muted"></span></div>
-      <div id="requisition-lines"></div>
-      <form id="requisition-line-form">
-        <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th></th></tr></thead><tbody><tr>
-          <td><select name="itm_id" id="requisition-item-select"></select></td>
-          <td class="num"><input name="prc_qty" type="number" step="any" min="0" required></td>
-          <td class="num"><input name="prc_price" type="number" step="any" min="0"></td>
-          <td><select name="prc_currency" class="currency-select"></select></td>
-          <td><button>Add line</button></td>
-        </tr></tbody></table>
-      </form>
-      <p id="requisition-lines-error" class="error"></p>
-    </section>
-
-    <section id="approvals-section" class="hidden">
-      <div class="section-head"><h2>Approvals</h2><span id="approval-summary" class="muted"></span></div>
-      <div id="approvals"></div>
-      <p id="approvals-error" class="error"></p>
     </section>
   </main>
 
@@ -235,11 +195,12 @@
   <div id="print-view"></div>
 
   <script>
-    const VERSION = '1.0.260825';
+    const VERSION = '1.0.260826';
     const CURRENCIES = ['USD', 'TWD', 'CNY', 'EUR'];
-    const PO_STATUSES = ['draft', 'issued', 'approved', 'sent', 'confirmed', 'paid', 'prepared', 'shipped', 'delivered', 'received', 'complete', 'inactive'];
+    // Lifecycle statuses mirror StockIt's poStatusOptions, in workflow order.
+    const PO_STATUSES = ['draft', 'pending_approval', 'approved', 'rejected', 'issued', 'confirmed', 'partially_received', 'received', 'invoiced', 'closed', 'on_hold', 'pending_revision', 'cancelled'];
+    const PAYMENT_STATUSES = ['unpaid', 'partially_paid', 'paid', 'refunded'];
     const OBLIGATION_STATUSES = ['planned', 'due', 'paid', 'cancelled'];
-    const REQUISITION_STATUSES = ['draft', 'submitted', 'approved', 'rejected', 'ordered', 'cancelled'];
     const SUPPLIER_STATUSES = ['Draft', 'Under Review', 'Active', 'Inactive', 'Hold', 'Phase-Out', 'Obsolete'];
     const SUPPLIER_FIELDS = ['sup_code', 'sup_name_en', 'sup_name_zh', 'sup_type', 'sup_contact_name', 'sup_contact_phone', 'sup_contact_email', 'sup_website', 'sup_vat_number', 'sup_bank_name', 'sup_bank_account', 'sup_status', 'sup_address_en', 'sup_note'];
     // StockIt filters by date range and status server-side, so the browser only holds the window it asked for.
@@ -253,9 +214,9 @@
 
     let suppliers = [], items = [], orders = [], currentPO = null, currentSupplier = null;
     let lines = [], schedule = [], priceList = {}, orderTotals = {};
-    let requisitions = [], requisitionLines = [], approvals = [], currentRequisition = null, currentRole = '';
+    let currentRole = '';
+    let poApprovals = [], poHistory = [], poApprovalRules = [];
     let sort = { key: 'por_doc_date', desc: true };
-    let requisitionSort = { key: 'prq_date', desc: true };
 
     async function api(method, path, body) {
       const response = await fetch(path, { method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined });
@@ -296,15 +257,12 @@
       $('#edit-view').classList.toggle('hidden', view !== 'edit');
       $('#suppliers-view').classList.toggle('hidden', view !== 'suppliers');
       $('#supplier-edit-view').classList.toggle('hidden', view !== 'supplier-edit');
-      $('#requisitions-view').classList.toggle('hidden', view !== 'requisitions');
-      $('#requisition-edit-view').classList.toggle('hidden', view !== 'requisition-edit');
       $('#identity').classList.toggle('hidden', view === 'login');
       $('#nav').classList.toggle('hidden', view === 'login');
       for (const button of document.querySelectorAll('#nav button')) {
         button.classList.toggle('active',
           (button.dataset.view === 'list' && (view === 'list' || view === 'edit'))
-          || (button.dataset.view === 'suppliers' && view.startsWith('supplier'))
-          || (button.dataset.view === 'requisitions' && view.startsWith('requisition')));
+          || (button.dataset.view === 'suppliers' && view.startsWith('supplier')));
       }
     }
     function showLogin() { $('#login').reset(); $('#login-error').classList.add('hidden'); show('login'); }
@@ -316,6 +274,7 @@
       $('#filter-to').value = '';
       $('#filter-supplier').value = '';
       $('#filter-status').value = '';
+      $('#filter-payment').value = '';
       $('#filter-search').value = '';
       showList();
     }
@@ -326,6 +285,7 @@
       { key: 'por_doc_date', label: 'Doc date', value: po => po.por_doc_date },
       { key: 'por_ship_date', label: 'Ship date', value: po => po.por_ship_date },
       { key: 'por_status', label: 'Status', value: po => po.por_status },
+      { key: 'por_payment_status', label: 'Payment', value: po => po.por_payment_status },
     ];
 
     async function showList() {
@@ -337,6 +297,7 @@
       if (to) params['to.por_doc_date'] = to;
       if ($('#filter-supplier').value) params['filter.sup_id'] = $('#filter-supplier').value;
       if ($('#filter-status').value) params['filter.por_status'] = $('#filter-status').value;
+      if ($('#filter-payment').value) params['filter.por_payment_status'] = $('#filter-payment').value;
       if ($('#filter-search').value.trim()) params.q = $('#filter-search').value.trim();
       try {
         orders = await listAll('purchase_orders', params, MAX_ROWS);
@@ -381,8 +342,8 @@
 
     // --- purchase order editor ---
     async function openPO(id) {
-      currentPO = null; lines = []; schedule = []; priceList = {};
-      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning', '#duplicate-note']) $(id).textContent = '';
+      currentPO = null; lines = []; schedule = []; priceList = {}; poApprovals = []; poHistory = [];
+      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning', '#duplicate-note', '#po-status-error', '#po-approvals-error']) $(id).textContent = '';
       if (id != null) {
         try {
           const record = await api('GET', `/api/tables/purchase_orders/${id}`);
@@ -396,12 +357,20 @@
       form.por_doc_date.value = po.por_doc_date || (id == null ? isoDate(new Date()) : '');
       form.por_ship_date.value = po.por_ship_date || '';
       form.por_paid_date.value = po.por_paid_date || '';
+      form.por_currency.value = po.por_currency || 'USD';
       $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'draft');
+      $('#payment-select').innerHTML = options(PAYMENT_STATUSES, po.por_payment_status || 'unpaid');
+      $('#po-status-form').note.value = '';
       form.por_note.value = po.por_note || '';
       $('#edit-title').textContent = currentPO ? `Purchase order ${currentPO.por_doc_number}` : 'New purchase order';
-      for (const id of ['#delete-po', '#print', '#duplicate-po', '#lines-section', '#schedule-section']) $(id).classList.toggle('hidden', !currentPO);
+      for (const id of ['#delete-po', '#print', '#duplicate-po', '#lines-section', '#schedule-section', '#po-status-section']) $(id).classList.toggle('hidden', !currentPO);
+      // Only a draft order can enter approval routing; afterwards the workflow owns the status.
+      $('#submit-po').classList.toggle('hidden', !currentPO || (po.por_status || 'draft') !== 'draft');
+      $('#po-status-label').textContent = currentPO
+        ? `Status ${po.por_status || 'draft'}; payment ${po.por_payment_status || 'unpaid'}${po.por_total_minor == null ? '' : `; approved total ${number(po.por_total_minor / 100)} ${po.por_currency || ''}`}`
+        : '';
       show('edit');
-      if (currentPO) await Promise.all([loadLines(), loadSchedule(), loadPriceList(currentPO.sup_id)]);
+      if (currentPO) await Promise.all([loadLines(), loadSchedule(), loadPriceList(currentPO.sup_id), loadPOApprovals(), loadPOHistory()]);
     }
 
     function formPayload(form, fields) {
@@ -473,6 +442,21 @@
       const ordered = lines.reduce((sum, line) => sum + (line.poc_qty || 0), 0);
       const received = lines.reduce((sum, line) => sum + (line.poc_received_qty || 0), 0);
       $('#line-totals').textContent = `${Object.keys(totals).length ? 'Order totals: ' + money(totals) + '. ' : ''}Received ${number(received)} of ${number(ordered)} units.`;
+      labelSubmitButton();
+    }
+
+    // Submitting only routes the order when an active approval rule matches its
+    // amount; with no matching rule StockIt approves it outright, so the button
+    // says what it will actually do. StockIt prices the order the same way:
+    // round(sum(qty * price) * 100), across every line regardless of currency.
+    function labelSubmitButton() {
+      const totalMinor = Math.round(lines.reduce((sum, line) => sum + (line.poc_qty || 0) * (line.poc_price || 0), 0) * 100);
+      const routed = poApprovalRules.some(rule => (rule.apr_min_amount_minor || 0) <= totalMinor);
+      const button = $('#submit-po');
+      button.textContent = routed ? 'Submit for approval' : 'Approve';
+      button.title = routed
+        ? 'Routes this order through the approval steps its amount requires.'
+        : 'No approval rule matches this amount, so StockIt approves the order outright.';
     }
     function saveLinePayload(line) {
       return {
@@ -584,12 +568,89 @@
       } catch (error) { $('#schedule-error').textContent = error.message; }
     });
 
+    // --- PO approvals, status history and status changes ---
+    async function loadPOApprovals() {
+      poApprovals = await listAll('approvals', { sort: 'apv_step', 'filter.apv_source_type': 'purchase_order', 'filter.apv_source_id': currentPO.por_id });
+      const firstPending = poApprovals.find(approval => approval.apv_status === 'pending');
+      $('#po-approvals').innerHTML = poApprovals.length ? `<table><thead><tr><th class="num">Step</th><th>Approver role</th><th>Status</th><th>Decided by</th><th>Decided at</th><th>Note</th><th></th></tr></thead><tbody>${
+        poApprovals.map((approval, index) => {
+          // Only the first pending step is decidable, and only by its own role.
+          const mine = approval === firstPending && approval.apv_role === currentRole;
+          return `<tr>
+            <td class="num">${number(approval.apv_step)}</td>
+            <td>${escape(approval.apv_role)}</td>
+            <td>${escape(approval.apv_status)}</td>
+            <td>${escape(approval.apv_decided_by)}</td>
+            <td>${escape(approval.apv_decided_at)}</td>
+            <td>${mine ? '<input class="approval-note" placeholder="Optional note">' : escape(approval.apv_note)}</td>
+            <td>${mine ? `<button data-approve="${index}" type="button">Approve</button> <button class="danger" data-reject="${index}" type="button">Reject</button>` : ''}</td>
+          </tr>`;
+        }).join('')
+      }</tbody></table>` : '<p class="muted">No approval steps: this order needed none.</p>';
+      if (!poApprovals.length) return;
+      $('#po-status-label').textContent += !firstPending ? '. All steps decided.'
+        : firstPending.apv_role === currentRole ? `. Waiting for your decision on step ${firstPending.apv_step}.`
+        : `. Waiting for role ${firstPending.apv_role} on step ${firstPending.apv_step}.`;
+    }
+
+    $('#po-approvals').addEventListener('click', async event => {
+      const { approve, reject } = event.target.dataset;
+      if (approve == null && reject == null) return;
+      const approval = poApprovals[approve ?? reject];
+      const note = $('#po-approvals').querySelector('.approval-note')?.value || '';
+      $('#po-approvals-error').textContent = '';
+      try {
+        await api('POST', `/api/approvals/${approval.apv_id}/decide`, { decision: approve != null ? 'approved' : 'rejected', note });
+        await openPO(currentPO.por_id);
+      } catch (error) { $('#po-approvals-error').textContent = error.message; }
+    });
+
+    async function loadPOHistory() {
+      poHistory = await listAll('po_status_history', { sort: 'psh_id', desc: true, parent_id: currentPO.por_id });
+      $('#po-history').innerHTML = poHistory.length ? `<table><thead><tr><th>Changed at</th><th>From</th><th>To</th><th>Payment</th><th>By</th><th>Note</th></tr></thead><tbody>${
+        poHistory.map(entry => `<tr>
+          <td>${escape(entry.created_at)}</td>
+          <td>${escape(entry.psh_previous_status)}</td>
+          <td>${escape(entry.psh_status)}</td>
+          <td>${escape(entry.psh_payment_status)}</td>
+          <td>${escape(entry.usr_id)}</td>
+          <td>${escape(entry.psh_note)}</td>
+        </tr>`).join('')
+      }</tbody></table>` : '<p class="muted">No status changes recorded yet.</p>';
+      $('#po-history-count').textContent = poHistory.length ? `${poHistory.length} recorded changes` : '';
+    }
+
+    $('#po-status-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      $('#po-status-error').textContent = '';
+      const form = event.target;
+      try {
+        await api('POST', `/api/purchase_orders/${currentPO.por_id}/status`, {
+          por_status: form.por_status.value, por_payment_status: form.por_payment_status.value, note: form.note.value,
+        });
+        await openPO(currentPO.por_id);
+      } catch (error) { $('#po-status-error').textContent = error.message; }
+    });
+
+    $('#submit-po').addEventListener('click', async () => {
+      if (!currentPO) return;
+      $('#po-status-error').textContent = '';
+      try {
+        const result = await api('POST', `/api/purchase_orders/${currentPO.por_id}/submit`);
+        await openPO(currentPO.por_id);
+        if (result.status === 'approved') $('#po-status-label').textContent += `. Approved outright: ${number(result.total_minor / 100)} ${result.currency || ''} needs no approval step.`;
+      } catch (error) { $('#po-status-error').textContent = error.message; }
+    });
+
+
     // --- PO header save / copy / delete ---
     $('#po-form').addEventListener('submit', async event => {
       event.preventDefault();
       $('#edit-error').textContent = '';
-      const payload = formPayload(event.target, ['por_doc_number', 'por_doc_date', 'por_ship_date', 'por_paid_date', 'por_status', 'por_note']);
+      const payload = formPayload(event.target, ['por_doc_number', 'por_doc_date', 'por_ship_date', 'por_paid_date', 'por_currency', 'por_note']);
       payload.sup_id = event.target.sup_id.value === '' ? null : Number(event.target.sup_id.value);
+      // Status and payment tag move through the status endpoint so every change is recorded with a note.
+      if (!currentPO) { payload.por_status = 'draft'; payload.por_payment_status = 'unpaid'; }
       try {
         if (currentPO) {
           await api('PUT', `/api/tables/purchase_orders/${currentPO.por_id}`, payload);
@@ -610,7 +671,8 @@
       try {
         const record = await api('POST', '/api/tables/purchase_orders', {
           por_doc_number: `${source}-COPY`, sup_id: currentPO.sup_id,
-          por_doc_date: isoDate(new Date()), por_status: 'draft', por_note: currentPO.por_note || null,
+          por_doc_date: isoDate(new Date()), por_status: 'draft', por_payment_status: 'unpaid',
+          por_currency: currentPO.por_currency || null, por_note: currentPO.por_note || null,
         });
         for (const line of lines) {
           await api('POST', '/api/tables/po_components', {
@@ -713,7 +775,7 @@
       const totals = lineTotals(lines);
       $('#print-view').innerHTML = `
         <h1>Purchase Order ${escape(po.por_doc_number)}</h1>
-        <p class="muted">Status: ${escape(po.por_status)}</p>
+        <p class="muted">Status: ${escape(po.por_status)} &middot; Payment: ${escape(po.por_payment_status || 'unpaid')}</p>
         <div class="print-meta">
           <div><h3>Supplier</h3>${supplier ? `${escape(supplier.sup_name_en || '')}<br>${escape(supplier.sup_address_en || '')}<br>${escape(supplier.sup_contact_name || '')} ${escape(supplier.sup_contact_phone || '')}<br>${escape(supplier.sup_contact_email || '')}` : '<span class="muted">No supplier selected</span>'}</div>
           <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '-')}<br>Ship date: ${escape(po.por_ship_date || '-')}<br>Paid date: ${escape(po.por_paid_date || '-')}</div>
@@ -729,227 +791,6 @@
         </tbody></table>` : ''}
         ${po.por_note ? `<h3>Note</h3><p>${escape(po.por_note)}</p>` : ''}`;
       window.print();
-    });
-
-    // --- purchase requisitions ---
-    function defaultRequisitionFrom() { const date = new Date(); date.setMonth(date.getMonth() - DEFAULT_MONTHS); return isoDate(date); }
-    function resetRequisitionFilters() {
-      $('#requisition-from').value = defaultRequisitionFrom();
-      $('#requisition-to').value = '';
-      $('#requisition-status').value = '';
-      $('#requisition-search').value = '';
-      showRequisitions();
-    }
-
-    const REQUISITION_COLUMNS = [
-      { key: 'prq_doc_number', label: 'Doc number', value: r => r.prq_doc_number },
-      { key: 'prq_date', label: 'Date', value: r => r.prq_date },
-      { key: 'prq_needed_by', label: 'Needed by', value: r => r.prq_needed_by },
-      { key: 'prq_department', label: 'Department', value: r => r.prq_department },
-      { key: 'supplier', label: 'Suggested supplier', value: r => supplierName(r.sup_id) },
-      { key: 'prq_status', label: 'Status', value: r => r.prq_status },
-    ];
-
-    async function showRequisitions() {
-      show('requisitions');
-      $('#requisition-list-error').textContent = '';
-      const params = { sort: 'prq_date', desc: true };
-      if ($('#requisition-from').value) params['from.prq_date'] = $('#requisition-from').value;
-      if ($('#requisition-to').value) params['to.prq_date'] = $('#requisition-to').value;
-      if ($('#requisition-status').value) params['filter.prq_status'] = $('#requisition-status').value;
-      if ($('#requisition-search').value.trim()) params.q = $('#requisition-search').value.trim();
-      try {
-        requisitions = await listAll('purchase_requisitions', params, MAX_ROWS);
-        renderRequisitions();
-      } catch (error) { $('#requisition-list-error').textContent = error.message; }
-    }
-
-    function renderRequisitions() {
-      const rows = requisitions.slice();
-      const column = REQUISITION_COLUMNS.find(c => c.key === requisitionSort.key) || REQUISITION_COLUMNS[1];
-      rows.sort((a, b) => String(column.value(a) ?? '').localeCompare(String(column.value(b) ?? ''), undefined, { numeric: true }) * (requisitionSort.desc ? -1 : 1));
-      $('#requisition-count').textContent = `${rows.length} requisitions`;
-      $('#requisition-table').innerHTML = rows.length ? `<table><thead><tr>${
-        REQUISITION_COLUMNS.map(c => `<th data-sort="${c.key}">${escape(c.label)}${requisitionSort.key === c.key ? (requisitionSort.desc ? ' &#9660;' : ' &#9650;') : ''}</th>`).join('')
-      }<th class="num">Total</th></tr></thead><tbody>${
-        rows.map(record => `<tr data-id="${record.prq_id}">${REQUISITION_COLUMNS.map(c => `<td>${escape(c.value(record))}</td>`).join('')}<td class="num">${
-          record.prq_total_minor == null ? '' : escape(`${number(record.prq_total_minor / 100)} ${record.prq_currency || ''}`)
-        }</td></tr>`).join('')
-      }</tbody></table>` : '<p class="muted">No requisitions match these filters.</p>';
-    }
-
-    async function openRequisition(id) {
-      currentRequisition = null; requisitionLines = []; approvals = [];
-      for (const selector of ['#requisition-error', '#requisition-lines-error', '#approvals-error']) $(selector).textContent = '';
-      if (id != null) {
-        try { currentRequisition = (await api('GET', `/api/tables/purchase_requisitions/${id}`)).row; }
-        catch (error) { $('#requisition-list-error').textContent = error.message; return; }
-      }
-      const record = currentRequisition || {};
-      const form = $('#requisition-form');
-      form.prq_doc_number.value = record.prq_doc_number || '';
-      form.prq_date.value = record.prq_date || (id == null ? isoDate(new Date()) : '');
-      form.prq_needed_by.value = record.prq_needed_by || '';
-      form.prq_department.value = record.prq_department || '';
-      form.prq_note.value = record.prq_note || '';
-      form.prq_currency.value = record.prq_currency || 'USD';
-      $('#requisition-supplier').innerHTML = '<option value="">&mdash;</option>' + suppliers.map(s => `<option value="${s.sup_id}"${s.sup_id === record.sup_id ? ' selected' : ''}>${escape(s.sup_name_en || s.sup_code || s.sup_id)}</option>`).join('');
-      $('#requisition-title').textContent = currentRequisition ? `Requisition ${currentRequisition.prq_doc_number}` : 'New requisition';
-      const status = record.prq_status || 'draft';
-      $('#requisition-status-label').textContent = currentRequisition ? `Status: ${status}${record.por_id ? `; purchase order #${record.por_id}` : ''}` : '';
-      // A requisition is only editable while it is a draft; the workflow owns it afterwards.
-      const draft = status === 'draft';
-      for (const field of form.elements) field.disabled = currentRequisition != null && !draft;
-      $('#delete-requisition').classList.toggle('hidden', !currentRequisition || !draft);
-      $('#submit-requisition').classList.toggle('hidden', !currentRequisition || !draft);
-      $('#requisition-to-po').classList.toggle('hidden', status !== 'approved');
-      $('#requisition-lines-section').classList.toggle('hidden', !currentRequisition);
-      $('#requisition-line-form').classList.toggle('hidden', !draft);
-      $('#approvals-section').classList.toggle('hidden', !currentRequisition || status === 'draft');
-      show('requisition-edit');
-      if (currentRequisition) await Promise.all([loadRequisitionLines(), loadApprovals()]);
-    }
-
-    async function loadRequisitionLines() {
-      requisitionLines = await listAll('prq_components', { sort: 'prc_id', parent_id: currentRequisition.prq_id });
-      renderRequisitionLines();
-    }
-    function renderRequisitionLines() {
-      const editable = (currentRequisition.prq_status || 'draft') === 'draft';
-      $('#requisition-lines').innerHTML = requisitionLines.length ? `<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th>Currency</th><th class="num">Line total</th>${editable ? '<th></th>' : ''}</tr></thead><tbody>${
-        requisitionLines.map((line, index) => `<tr>
-          <td>${escape(itemName(line.itm_id))}</td>
-          <td class="num">${number(line.prc_qty)}</td>
-          <td class="num">${number(line.prc_price)}</td>
-          <td>${escape(line.prc_currency)}</td>
-          <td class="num">${number((line.prc_qty || 0) * (line.prc_price || 0))}</td>
-          ${editable ? `<td><button class="danger" data-delete-line="${index}" type="button">Delete</button></td>` : ''}
-        </tr>`).join('')
-      }</tbody></table>` : '<p class="muted">No lines yet. A requisition needs at least one line before it can be submitted.</p>';
-      const totals = sumByCurrency(requisitionLines, line => line.prc_currency, line => (line.prc_qty || 0) * (line.prc_price || 0));
-      $('#requisition-totals').textContent = Object.keys(totals).length ? `Requested: ${money(totals)}` : '';
-    }
-
-    async function loadApprovals() {
-      approvals = await listAll('approvals', { sort: 'apv_step', 'filter.apv_source_type': 'purchase_requisition', 'filter.apv_source_id': currentRequisition.prq_id });
-      renderApprovals();
-    }
-    function renderApprovals() {
-      const firstPending = approvals.find(approval => approval.apv_status === 'pending');
-      $('#approvals').innerHTML = approvals.length ? `<table><thead><tr><th class="num">Step</th><th>Approver role</th><th>Status</th><th>Decided by</th><th>Decided at</th><th>Note</th><th></th></tr></thead><tbody>${
-        approvals.map((approval, index) => {
-          const mine = approval === firstPending && approval.apv_role === currentRole;
-          return `<tr>
-            <td class="num">${number(approval.apv_step)}</td>
-            <td>${escape(approval.apv_role)}</td>
-            <td>${escape(approval.apv_status)}</td>
-            <td>${escape(approval.apv_decided_by)}</td>
-            <td>${escape(approval.apv_decided_at)}</td>
-            <td>${mine ? '<input id="approval-note" placeholder="Optional note">' : escape(approval.apv_note)}</td>
-            <td>${mine ? `<button data-approve="${index}" type="button">Approve</button> <button class="danger" data-reject="${index}" type="button">Reject</button>` : ''}</td>
-          </tr>`;
-        }).join('')
-      }</tbody></table>` : '<p class="muted">No approval steps: this requisition needed none.</p>';
-      $('#approval-summary').textContent = !firstPending ? 'All steps decided.'
-        : firstPending.apv_role === currentRole ? `Waiting for your decision on step ${firstPending.apv_step}.`
-        : `Waiting for role ${firstPending.apv_role} on step ${firstPending.apv_step}.`;
-    }
-
-    async function decideApproval(approval, decision) {
-      const note = $('#approval-note')?.value || '';
-      $('#approvals-error').textContent = '';
-      try {
-        await api('POST', `/api/approvals/${approval.apv_id}/decide`, { decision, note });
-        await openRequisition(currentRequisition.prq_id);
-      } catch (error) { $('#approvals-error').textContent = error.message; }
-    }
-
-    $('#approvals').addEventListener('click', event => {
-      const { approve, reject } = event.target.dataset;
-      if (approve != null) decideApproval(approvals[approve], 'approved');
-      else if (reject != null) decideApproval(approvals[reject], 'rejected');
-    });
-
-    $('#requisition-lines').addEventListener('click', async event => {
-      const remove = event.target.dataset.deleteLine;
-      if (remove == null) return;
-      $('#requisition-lines-error').textContent = '';
-      try {
-        await api('DELETE', `/api/tables/prq_components/${requisitionLines[remove].prc_id}`);
-        await loadRequisitionLines();
-      } catch (error) { $('#requisition-lines-error').textContent = error.message; }
-    });
-
-    $('#requisition-line-form').addEventListener('submit', async event => {
-      event.preventDefault();
-      $('#requisition-lines-error').textContent = '';
-      const form = event.target;
-      try {
-        await api('POST', '/api/tables/prq_components', {
-          prq_id: currentRequisition.prq_id,
-          itm_id: Number(form.itm_id.value),
-          prc_qty: Number(form.prc_qty.value),
-          prc_price: form.prc_price.value === '' ? null : Number(form.prc_price.value),
-          prc_currency: form.prc_currency.value,
-        });
-        form.prc_qty.value = ''; form.prc_price.value = '';
-        await loadRequisitionLines();
-      } catch (error) { $('#requisition-lines-error').textContent = error.message; }
-    });
-
-    $('#requisition-form').addEventListener('submit', async event => {
-      event.preventDefault();
-      $('#requisition-error').textContent = '';
-      const payload = formPayload(event.target, ['prq_doc_number', 'prq_date', 'prq_needed_by', 'prq_department', 'prq_currency', 'prq_note']);
-      payload.sup_id = event.target.sup_id.value === '' ? null : Number(event.target.sup_id.value);
-      try {
-        if (currentRequisition) {
-          await api('PUT', `/api/tables/purchase_requisitions/${currentRequisition.prq_id}`, payload);
-          await openRequisition(currentRequisition.prq_id);
-        } else {
-          payload.prq_status = 'draft';
-          const record = await api('POST', '/api/tables/purchase_requisitions', payload);
-          await openRequisition(record.row.prq_id);
-        }
-      } catch (error) { $('#requisition-error').textContent = error.message; }
-    });
-
-    $('#submit-requisition').addEventListener('click', async () => {
-      if (!currentRequisition) return;
-      $('#requisition-error').textContent = '';
-      try {
-        const result = await api('POST', `/api/purchase_requisitions/${currentRequisition.prq_id}/submit`);
-        await openRequisition(currentRequisition.prq_id);
-        $('#approval-summary').textContent = result.status === 'approved'
-          ? `Approved outright: ${number(result.total_minor / 100)} ${result.currency || ''} needs no approval step.`
-          : $('#approval-summary').textContent;
-      } catch (error) { $('#requisition-error').textContent = error.message; }
-    });
-
-    $('#requisition-to-po').addEventListener('click', async () => {
-      if (!currentRequisition) return;
-      const docNumber = prompt('Document number for the purchase order', currentRequisition.prq_doc_number || '');
-      if (docNumber === null) return;
-      $('#requisition-error').textContent = '';
-      try {
-        const result = await api('POST', `/api/purchase_requisitions/${currentRequisition.prq_id}/purchase_order`, { por_doc_number: docNumber });
-        orderTotals = {};
-        await openPO(result.purchase_order.por_id);
-      } catch (error) { $('#requisition-error').textContent = error.message; }
-    });
-
-    $('#delete-requisition').addEventListener('click', async () => {
-      if (!currentRequisition || !confirm(`Delete requisition ${currentRequisition.prq_doc_number}? Its lines are deleted too.`)) return;
-      $('#requisition-error').textContent = '';
-      try { await api('DELETE', `/api/tables/purchase_requisitions/${currentRequisition.prq_id}`); await showRequisitions(); }
-      catch (error) { $('#requisition-error').textContent = error.message; }
-    });
-
-    $('#requisition-table').addEventListener('click', event => {
-      const header = event.target.closest('th[data-sort]');
-      if (header) { const key = header.dataset.sort; requisitionSort = { key, desc: requisitionSort.key === key ? !requisitionSort.desc : false }; renderRequisitions(); return; }
-      const row = event.target.closest('tr[data-id]');
-      if (row) openRequisition(Number(row.dataset.id));
     });
 
     // --- wiring ---
@@ -969,19 +810,12 @@
       if (row) openPO(Number(row.dataset.id));
     });
     let searchTimer;
-    for (const id of ['#filter-from', '#filter-to', '#filter-supplier', '#filter-status']) $(id).addEventListener('change', showList);
+    for (const id of ['#filter-from', '#filter-to', '#filter-supplier', '#filter-status', '#filter-payment']) $(id).addEventListener('change', showList);
     $('#filter-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(showList, 300); });
     $('#supplier-search').addEventListener('input', renderSuppliers);
     $('#filter-reset').addEventListener('click', resetFilters);
     $('#new-po').addEventListener('click', () => openPO(null));
     $('#new-supplier').addEventListener('click', () => openSupplier(null));
-    $('#new-requisition').addEventListener('click', () => openRequisition(null));
-    $('#reload-requisitions').addEventListener('click', showRequisitions);
-    $('#requisition-back').addEventListener('click', showRequisitions);
-    $('#requisition-reset').addEventListener('click', resetRequisitionFilters);
-    for (const id of ['#requisition-from', '#requisition-to', '#requisition-status']) $(id).addEventListener('change', showRequisitions);
-    let requisitionSearchTimer;
-    $('#requisition-search').addEventListener('input', () => { clearTimeout(requisitionSearchTimer); requisitionSearchTimer = setTimeout(showRequisitions, 300); });
     $('#reload').addEventListener('click', showList);
     $('#back').addEventListener('click', showList);
     $('#supplier-back').addEventListener('click', showSuppliers);
@@ -989,7 +823,6 @@
       const view = event.target.dataset.view;
       if (view === 'list') showList();
       else if (view === 'suppliers') showSuppliers();
-      else if (view === 'requisitions') showRequisitions();
     });
     $('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
     $('#login').addEventListener('submit', async event => {
@@ -1011,13 +844,14 @@
       orderTotals = {};
       [items] = await Promise.all([listAll('items', { sort: 'itm_id' }), refreshSuppliers()]);
       $('#item-select').innerHTML = items.map(i => `<option value="${i.itm_id}">${escape(itemName(i.itm_id))}</option>`).join('');
-      $('#requisition-item-select').innerHTML = $('#item-select').innerHTML;
       $('#filter-status').innerHTML = '<option value="">All statuses</option>' + options(PO_STATUSES);
-      $('#requisition-status').innerHTML = '<option value="">All statuses</option>' + options(REQUISITION_STATUSES);
       $('#filter-from').value = defaultFrom();
-      $('#requisition-from').value = defaultRequisitionFrom();
       for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');
       for (const select of document.querySelectorAll('.obligation-status-select')) select.innerHTML = options(OBLIGATION_STATUSES, 'planned');
+      $('#filter-payment').innerHTML = '<option value="">All payment tags</option>' + options(PAYMENT_STATUSES);
+      // Advisory only: a missing rule list just leaves the submit button on its default label.
+      try { poApprovalRules = await listAll('approval_rules', { sort: 'apr_step', 'filter.apr_source_type': 'purchase_order', 'filter.apr_status': 'active' }); }
+      catch { poApprovalRules = []; }
       await showList();
     }
     (async () => {

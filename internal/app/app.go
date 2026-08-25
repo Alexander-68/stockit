@@ -38,7 +38,7 @@ type Config struct {
 
 // Version is the StockIt release stamp, formatted 1.0.YYMMDD. Bump it on every
 // code change; the external apps under apps/ carry their own matching stamp.
-const Version = "1.0.260825"
+const Version = "1.0.260826"
 
 type Principal struct {
 	UserID    int64
@@ -425,9 +425,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("DELETE /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableDelete)))
 	mux.Handle("POST /api/tables/{table}/import", s.cop.Handler(s.withSession(s.handleAPITableImport)))
 
-	mux.Handle("POST /api/purchase_requisitions/{id}/submit", s.cop.Handler(s.withSession(s.handleAPISubmitRequisition)))
-	mux.Handle("POST /api/purchase_requisitions/{id}/purchase_order", s.cop.Handler(s.withSession(s.handleAPICreatePOFromRequisition)))
 	mux.Handle("POST /api/approvals/{id}/decide", s.cop.Handler(s.withSession(s.handleAPIDecideApproval)))
+	mux.Handle("POST /api/purchase_orders/{id}/submit", s.cop.Handler(s.withSession(s.handleAPISubmitPurchaseOrder)))
+	mux.Handle("POST /api/purchase_orders/{id}/status", s.cop.Handler(s.withSession(s.handleAPISetPOStatus)))
 	mcpHandler := s.cop.Handler(s.newMCPHandler())
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("POST /mcp", mcpHandler)
@@ -1256,7 +1256,7 @@ func (s *Server) withSession(next http.HandlerFunc) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), principalKey, principal)
+		ctx := store.WithActor(context.WithValue(r.Context(), principalKey, principal), principal.UserID)
 		next(w, r.WithContext(ctx))
 	})
 }

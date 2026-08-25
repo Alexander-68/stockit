@@ -18,7 +18,8 @@ StockIt is a secure system of record for external web apps and smart tools throu
   - `bom_components`
   - `quotes`
   - `quote_components`
-  - `purchase_orders`
+  - `purchase_orders` with lifecycle status, payment tag, and priced total
+  - `po_status_history` recording every purchase-order status change (when, who, note)
   - `po_components` with IQC fields
   - `sales_orders`
   - `sales_order_components`
@@ -57,7 +58,7 @@ StockIt is a secure system of record for external web apps and smart tools throu
   - validated generic record list/get/create/update/delete
   - parent-filtered list (`?parent_id=<value>` for subtables)
   - server-side list filters: `?filter.<column>=` (equality), `?from.<column>=` / `?to.<column>=` (inclusive range), `?q=` (substring across text columns)
-  - purchase requisition approval workflow (submit, decide, convert to purchase order)
+  - purchase order approval workflow (submit, decide) and recorded status/payment changes
   - multipart CSV import (`POST /api/tables/{table}/import`)
 - Streamable HTTP MCP server powered by `github.com/mark3labs/mcp-go` on `/mcp`, protected by the same StockIt session authentication as the REST API.
 - MCP tools aligned with REST API operations:
@@ -69,17 +70,23 @@ StockIt is a secure system of record for external web apps and smart tools throu
   - `stockit_update_record`
   - `stockit_delete_record`
   - `stockit_import_csv`
-  - `stockit_submit_requisition`
   - `stockit_decide_approval`
-  - `stockit_create_po_from_requisition`
+  - `stockit_submit_purchase_order`
+  - `stockit_set_purchase_order_status`
 - Root `openapi.yaml` maintained as the REST API contract.
 
-Purchase requisition approval:
+Purchase order lifecycle:
 
-- A requisition (`purchase_requisitions` + `prq_components`) is drafted, then submitted. Submission prices it from its lines into `prq_total_minor` and creates one pending approval step per active `approval_rules` row whose `apr_min_amount_minor` the total reaches.
-- Each step is decided in `apr_step` order and only by a user whose role matches the step's `apr_role`. A rejection stops the requisition; approving the last step approves it.
-- An approved requisition converts to a draft purchase order with the same lines, and the two records are linked through `purchase_requisitions.por_id`.
-- `approvals` rows are an audit trail: they are written only by these endpoints, never through the generic table API.
+- `por_status` runs through internal sign-off (`draft`, `pending_approval`, `approved`, `rejected`), vendor engagement and fulfilment (`issued`, `confirmed`, `partially_received`, `received`), accounting closure (`invoiced`, `closed`), and three exception states reachable at any point (`on_hold`, `pending_revision`, `cancelled`).
+- `por_payment_status` is a separate financial tag: `unpaid`, `partially_paid`, `paid`, `refunded`. It is deliberately independent of the lifecycle, so a closed order can still be unpaid.
+- A draft order submits for approval through `approval_rules` rows with `apr_source_type = purchase_order`. Submission prices the order from its lines into `por_total_minor` and moves it to `pending_approval`; the last approval sets `approved`, a rejection sets `rejected`. An order matching no rule is approved outright.
+- Every status or payment-tag change is appended to `po_status_history` with the previous status, the new status, the acting user, the timestamp and an optional note. `POST /api/purchase_orders/{id}/status` is the way to record a note with the change; a plain `PUT` on the table records the change with no note.
+- `partially_received` and `received` are derived from the line receipt quantities in `po_components`. The derivation only moves an order already in the fulfilment part of the lifecycle (`issued`, `confirmed`, `partially_received`, `received`), so a draft or a closed order is never disturbed, and the derived change is recorded in the history like any other.
+- `po_status_history` and `approvals` rows are an audit trail: they are written only by the store and the approval endpoints, never through the generic table API.
+
+Purchase requisitions were removed: purchasing drafts purchase orders directly and the PO approval workflow above replaces the requisition one. On startup, a database written before the removal loses `purchase_requisitions`, `prq_components`, the `purchase_orders.prq_id` link (the table is rebuilt without it), and every `approval_rules` / `approvals` row with `apr_source_type`/`apv_source_type` = `purchase_requisition`. Purchase orders, their lines and their history are preserved.
+
+Databases written before the lifecycle statuses landed are migrated on startup: `sent` becomes `issued`, `prepared` and `shipped` become `confirmed`, `delivered` becomes `received`, `complete` becomes `closed`, `inactive` becomes `cancelled`, and `paid` becomes `closed` tagged `paid`. Orders with no payment tag default to `unpaid`.
 
 Cash-planning base data:
 
@@ -169,9 +176,9 @@ Current REST endpoints:
 - `PUT /api/tables/{table}/{id}`
 - `DELETE /api/tables/{table}/{id}`
 - `POST /api/tables/{table}/import` (multipart `csv_file` upload)
-- `POST /api/purchase_requisitions/{id}/submit`
-- `POST /api/purchase_requisitions/{id}/purchase_order`
 - `POST /api/approvals/{id}/decide`
+- `POST /api/purchase_orders/{id}/submit`
+- `POST /api/purchase_orders/{id}/status`
 
 Current MCP transport:
 

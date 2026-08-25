@@ -16,73 +16,81 @@ var ErrWorkflow = errors.New("workflow rule violated")
 // ErrWorkflowForbidden marks a workflow step the caller's role may not take.
 var ErrWorkflowForbidden = errors.New("workflow step not allowed for this role")
 
-const requisitionSource = "purchase_requisition"
+// purchaseOrderSource is the only document type that routes through approvals.
+// It stays a stored value on approvals and approval_rules so a second document
+// type can be added later without a schema change.
+const purchaseOrderSource = "purchase_order"
 
-type RequisitionSubmission struct {
-	RequisitionID int64            `json:"requisition_id"`
-	Status        string           `json:"status"`
-	TotalMinor    int64            `json:"total_minor"`
-	Currency      string           `json:"currency"`
-	Approvals     []map[string]any `json:"approvals"`
+type ApprovalSubmission struct {
+	SourceType string           `json:"source_type"`
+	SourceID   int64            `json:"source_id"`
+	Status     string           `json:"status"`
+	TotalMinor int64            `json:"total_minor"`
+	Currency   string           `json:"currency"`
+	Approvals  []map[string]any `json:"approvals"`
 }
 
 type ApprovalDecision struct {
 	Approval           map[string]any `json:"approval"`
-	RequisitionID      int64          `json:"requisition_id"`
-	RequisitionStatus  string         `json:"requisition_status"`
+	SourceType         string         `json:"source_type"`
+	SourceID           int64          `json:"source_id"`
+	Status             string         `json:"status"`
 	RemainingApprovals int            `json:"remaining_approvals"`
 }
 
-// SubmitRequisition prices a draft requisition from its lines, matches the
+// SubmitPurchaseOrder prices a draft purchase order from its lines, matches the
 // active approval rules for that amount, and records one pending approval step
-// per matching rule. A requisition that matches no rule needs no approval and
-// is approved outright.
-func (s *Store) SubmitRequisition(ctx context.Context, requisitionID int64) (RequisitionSubmission, error) {
+// per matching rule. An order that matches no rule needs no approval and is
+// approved outright.
+func (s *Store) SubmitPurchaseOrder(ctx context.Context, purchaseOrderID int64) (ApprovalSubmission, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("begin submit: %w", err)
+		return ApprovalSubmission{}, fmt.Errorf("begin submit: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var status, currency sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT prq_status, prq_currency FROM purchase_requisitions WHERE prq_id = ?`, requisitionID).Scan(&status, &currency)
+	var status, currency, payment sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT por_status, por_currency, por_payment_status FROM purchase_orders WHERE por_id = ?`,
+		purchaseOrderID).Scan(&status, &currency, &payment)
 	if errors.Is(err, sql.ErrNoRows) {
-		return RequisitionSubmission{}, fmt.Errorf("%w: requisition not found", ErrWorkflow)
+		return ApprovalSubmission{}, fmt.Errorf("%w: purchase order not found", ErrWorkflow)
 	}
 	if err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("read requisition: %w", err)
+		return ApprovalSubmission{}, fmt.Errorf("read purchase order: %w", err)
 	}
 	if current := strings.TrimSpace(status.String); current != "" && current != "draft" {
-		return RequisitionSubmission{}, fmt.Errorf("%w: only a draft requisition can be submitted (status is %q)", ErrWorkflow, current)
+		return ApprovalSubmission{}, fmt.Errorf("%w: only a draft purchase order can be submitted (status is %q)", ErrWorkflow, current)
 	}
 
 	var total sql.NullFloat64
 	var lineCurrency sql.NullString
 	var lineCount int
 	err = tx.QueryRowContext(ctx, `
-		SELECT COUNT(*), SUM(COALESCE(prc_qty, 0) * COALESCE(prc_price, 0)), MIN(prc_currency)
-		FROM prq_components WHERE prq_id = ?`, requisitionID).Scan(&lineCount, &total, &lineCurrency)
+		SELECT COUNT(*), SUM(COALESCE(poc_qty, 0) * COALESCE(poc_price, 0)), MIN(poc_currency)
+		FROM po_components WHERE por_id = ?`, purchaseOrderID).Scan(&lineCount, &total, &lineCurrency)
 	if err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("total requisition lines: %w", err)
+		return ApprovalSubmission{}, fmt.Errorf("total purchase order lines: %w", err)
 	}
 	if lineCount == 0 {
-		return RequisitionSubmission{}, fmt.Errorf("%w: a requisition needs at least one line before submission", ErrWorkflow)
+		return ApprovalSubmission{}, fmt.Errorf("%w: a purchase order needs at least one line before submission", ErrWorkflow)
 	}
 	totalMinor := int64(math.Round(total.Float64 * 100))
 	if strings.TrimSpace(currency.String) == "" {
 		currency = lineCurrency
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM approvals WHERE apv_source_type = ? AND apv_source_id = ?`, requisitionSource, requisitionID); err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("clear previous approvals: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM approvals WHERE apv_source_type = ? AND apv_source_id = ?`,
+		purchaseOrderSource, purchaseOrderID); err != nil {
+		return ApprovalSubmission{}, fmt.Errorf("clear previous approvals: %w", err)
 	}
 
 	rules, err := tx.QueryContext(ctx, `
 		SELECT apr_step, apr_role FROM approval_rules
 		WHERE apr_source_type = ? AND apr_status = 'active' AND apr_min_amount_minor <= ?
-		ORDER BY apr_step, apr_id`, requisitionSource, totalMinor)
+		ORDER BY apr_step, apr_id`, purchaseOrderSource, totalMinor)
 	if err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("match approval rules: %w", err)
+		return ApprovalSubmission{}, fmt.Errorf("match approval rules: %w", err)
 	}
 	type step struct {
 		number int64
@@ -93,53 +101,58 @@ func (s *Store) SubmitRequisition(ctx context.Context, requisitionID int64) (Req
 		var next step
 		if err := rules.Scan(&next.number, &next.role); err != nil {
 			_ = rules.Close()
-			return RequisitionSubmission{}, fmt.Errorf("scan approval rule: %w", err)
+			return ApprovalSubmission{}, fmt.Errorf("scan approval rule: %w", err)
 		}
 		steps = append(steps, next)
 	}
 	if err := rules.Err(); err != nil {
 		_ = rules.Close()
-		return RequisitionSubmission{}, fmt.Errorf("read approval rules: %w", err)
+		return ApprovalSubmission{}, fmt.Errorf("read approval rules: %w", err)
 	}
 	_ = rules.Close()
 
 	for _, next := range steps {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO approvals (apv_source_type, apv_source_id, apv_step, apv_role, apv_status)
-			VALUES (?, ?, ?, ?, 'pending')`, requisitionSource, requisitionID, next.number, next.role); err != nil {
-			return RequisitionSubmission{}, fmt.Errorf("create approval step: %w", err)
+			VALUES (?, ?, ?, ?, 'pending')`, purchaseOrderSource, purchaseOrderID, next.number, next.role); err != nil {
+			return ApprovalSubmission{}, fmt.Errorf("create approval step: %w", err)
 		}
 	}
 
 	newStatus := "approved"
 	if len(steps) > 0 {
-		newStatus = "submitted"
+		newStatus = "pending_approval"
 	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE purchase_requisitions SET prq_status = ?, prq_total_minor = ?, prq_currency = ?
-		WHERE prq_id = ?`, newStatus, totalMinor, nullableString(currency), requisitionID); err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("update requisition: %w", err)
+		UPDATE purchase_orders SET por_status = ?, por_total_minor = ?, por_currency = ? WHERE por_id = ?`,
+		newStatus, totalMinor, nullableString(currency), purchaseOrderID); err != nil {
+		return ApprovalSubmission{}, fmt.Errorf("update purchase order: %w", err)
+	}
+	if err := insertPOHistoryTx(ctx, tx, purchaseOrderID, status.String, newStatus, payment.String,
+		fmt.Sprintf("submitted for approval (%d step(s))", len(steps)), actorFromContext(ctx)); err != nil {
+		return ApprovalSubmission{}, err
 	}
 
-	approvals, err := selectApprovals(ctx, tx, requisitionID)
+	approvals, err := selectApprovals(ctx, tx, purchaseOrderID)
 	if err != nil {
-		return RequisitionSubmission{}, err
+		return ApprovalSubmission{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return RequisitionSubmission{}, fmt.Errorf("commit submit: %w", err)
+		return ApprovalSubmission{}, fmt.Errorf("commit submit: %w", err)
 	}
 
-	return RequisitionSubmission{
-		RequisitionID: requisitionID,
-		Status:        newStatus,
-		TotalMinor:    totalMinor,
-		Currency:      currency.String,
-		Approvals:     approvals,
+	return ApprovalSubmission{
+		SourceType: purchaseOrderSource,
+		SourceID:   purchaseOrderID,
+		Status:     newStatus,
+		TotalMinor: totalMinor,
+		Currency:   currency.String,
+		Approvals:  approvals,
 	}, nil
 }
 
 // DecideApproval records one approval step. Steps are decided in order, only by
-// a user holding the step's role, and a rejection stops the whole requisition.
+// a user holding the step's role, and a rejection stops the whole order.
 func (s *Store) DecideApproval(ctx context.Context, approvalID int64, role string, userID int64, approved bool, note string) (ApprovalDecision, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -157,6 +170,9 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID int64, role strin
 	}
 	if err != nil {
 		return ApprovalDecision{}, fmt.Errorf("read approval: %w", err)
+	}
+	if sourceType != purchaseOrderSource {
+		return ApprovalDecision{}, fmt.Errorf("%w: unknown approval source %q", ErrWorkflow, sourceType)
 	}
 	if stepStatus != "pending" {
 		return ApprovalDecision{}, fmt.Errorf("%w: approval %d was already %s", ErrWorkflow, approvalID, stepStatus)
@@ -194,16 +210,27 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID int64, role strin
 		return ApprovalDecision{}, fmt.Errorf("count remaining approvals: %w", err)
 	}
 
-	requisitionStatus := "submitted"
+	orderStatus := "pending_approval"
 	switch {
 	case !approved:
-		requisitionStatus = "rejected"
+		orderStatus = "rejected"
 	case remaining == 0:
-		requisitionStatus = "approved"
+		orderStatus = "approved"
 	}
-	if requisitionStatus != "submitted" {
-		if _, err := tx.ExecContext(ctx, `UPDATE purchase_requisitions SET prq_status = ? WHERE prq_id = ?`, requisitionStatus, sourceID); err != nil {
-			return ApprovalDecision{}, fmt.Errorf("update requisition status: %w", err)
+	if orderStatus != "pending_approval" {
+		var payment sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT por_payment_status FROM purchase_orders WHERE por_id = ?`, sourceID).Scan(&payment); err != nil {
+			return ApprovalDecision{}, fmt.Errorf("read purchase order payment status: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE purchase_orders SET por_status = ? WHERE por_id = ?`, orderStatus, sourceID); err != nil {
+			return ApprovalDecision{}, fmt.Errorf("update purchase order status: %w", err)
+		}
+		historyNote := fmt.Sprintf("approval step %d %s", stepNumber, decision)
+		if strings.TrimSpace(note) != "" {
+			historyNote += ": " + note
+		}
+		if err := insertPOHistoryTx(ctx, tx, sourceID, "pending_approval", orderStatus, payment.String, historyNote, userID); err != nil {
+			return ApprovalDecision{}, err
 		}
 	}
 
@@ -219,82 +246,18 @@ func (s *Store) DecideApproval(ctx context.Context, approvalID int64, role strin
 
 	return ApprovalDecision{
 		Approval:           row,
-		RequisitionID:      sourceID,
-		RequisitionStatus:  requisitionStatus,
+		SourceType:         purchaseOrderSource,
+		SourceID:           sourceID,
+		Status:             orderStatus,
 		RemainingApprovals: remaining,
 	}, nil
 }
 
-// CreatePOFromRequisition turns an approved requisition into a draft purchase
-// order with the same lines, and links the two records.
-func (s *Store) CreatePOFromRequisition(ctx context.Context, requisitionID int64, docNumber string, supplierID *int64, userID int64) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin create purchase order: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var status, requisitionDoc sql.NullString
-	var requisitionSupplier, existingPO sql.NullInt64
-	err = tx.QueryRowContext(ctx, `
-		SELECT prq_status, prq_doc_number, sup_id, por_id FROM purchase_requisitions WHERE prq_id = ?`,
-		requisitionID).Scan(&status, &requisitionDoc, &requisitionSupplier, &existingPO)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("%w: requisition not found", ErrWorkflow)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("read requisition: %w", err)
-	}
-	if strings.TrimSpace(status.String) != "approved" {
-		return 0, fmt.Errorf("%w: only an approved requisition can become a purchase order (status is %q)", ErrWorkflow, status.String)
-	}
-	if existingPO.Valid {
-		return 0, fmt.Errorf("%w: requisition already became purchase order %d", ErrWorkflow, existingPO.Int64)
-	}
-
-	if strings.TrimSpace(docNumber) == "" {
-		docNumber = requisitionDoc.String
-	}
-	supplier := requisitionSupplier
-	if supplierID != nil {
-		supplier = sql.NullInt64{Int64: *supplierID, Valid: true}
-	}
-
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO purchase_orders (sup_id, por_doc_number, por_doc_date, usr_id, por_status)
-		VALUES (?, ?, date('now'), ?, 'draft')`, supplier, docNumber, userID)
-	if err != nil {
-		return 0, fmt.Errorf("create purchase order: %w", err)
-	}
-	purchaseOrderID, err := result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("read new purchase order id: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO po_components (por_id, itm_id, poc_qty, poc_price, poc_currency)
-		SELECT ?, itm_id, prc_qty, prc_price, prc_currency FROM prq_components WHERE prq_id = ? ORDER BY prc_id`,
-		purchaseOrderID, requisitionID); err != nil {
-		return 0, fmt.Errorf("copy requisition lines: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE purchase_requisitions SET prq_status = 'ordered', por_id = ? WHERE prq_id = ?`,
-		purchaseOrderID, requisitionID); err != nil {
-		return 0, fmt.Errorf("link requisition to purchase order: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit create purchase order: %w", err)
-	}
-	return purchaseOrderID, nil
-}
-
-func selectApprovals(ctx context.Context, tx *sql.Tx, requisitionID int64) ([]map[string]any, error) {
+func selectApprovals(ctx context.Context, tx *sql.Tx, purchaseOrderID int64) ([]map[string]any, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT apv_id, apv_source_type, apv_source_id, apv_step, apv_role, apv_status, apv_decided_by, apv_decided_at, apv_note, created_at
 		FROM approvals WHERE apv_source_type = ? AND apv_source_id = ? ORDER BY apv_step, apv_id`,
-		requisitionSource, requisitionID)
+		purchaseOrderSource, purchaseOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("list approvals: %w", err)
 	}

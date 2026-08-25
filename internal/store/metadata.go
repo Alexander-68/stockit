@@ -22,26 +22,32 @@ const (
 )
 
 var (
-	roleOptions     = []string{"admin", "user", "guest"}
-	statusOptions   = []string{"Draft", "Under Review", "Active", "Inactive", "Hold", "Phase-Out", "Obsolete"}
+	roleOptions   = []string{"admin", "user", "guest"}
+	statusOptions = []string{"Draft", "Under Review", "Active", "Inactive", "Hold", "Phase-Out", "Obsolete"}
+	// poStatusOptions is the purchase-order lifecycle: internal sign-off, then
+	// vendor engagement and fulfilment, then accounting closure, plus the three
+	// exception states reachable from anywhere.
 	poStatusOptions = []string{
 		"draft",
-		"issued",
+		"pending_approval",
 		"approved",
-		"sent",
+		"rejected",
+		"issued",
 		"confirmed",
-		"paid",
-		"prepared",
-		"shipped",
-		"delivered",
+		"partially_received",
 		"received",
-		"complete",
-		"inactive",
+		"invoiced",
+		"closed",
+		"on_hold",
+		"pending_revision",
+		"cancelled",
 	}
+	// paymentStatusOptions is the purchase order's financial tag, tracked apart
+	// from the lifecycle status so a closed order can still be unpaid.
+	paymentStatusOptions    = []string{"unpaid", "partially_paid", "paid", "refunded"}
 	quoteStatusOptions      = []string{"active", "inactive"}
-	requisitionStatuses     = []string{"draft", "submitted", "approved", "rejected", "ordered", "cancelled"}
 	approvalStatuses        = []string{"pending", "approved", "rejected"}
-	approvalSources         = []string{"purchase_requisition"}
+	approvalSources         = []string{"purchase_order"}
 	salesOrderStatusOptions = []string{
 		"confirmed",
 		"preparing",
@@ -305,6 +311,9 @@ func AllTables() map[string]TableDef {
 				{Column: "por_paid_date", Label: "paid_date", Kind: KindDate, Editable: true, List: true, Sortable: true},
 				{Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"},
 				{Column: "por_status", Label: "status", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: poStatusOptions},
+				{Column: "por_payment_status", Label: "payment_status", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: paymentStatusOptions},
+				{Column: "por_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions},
+				{Column: "por_total_minor", Label: "total_minor", Kind: KindInteger, List: true, Sortable: true},
 				{Column: "por_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
 				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
@@ -647,19 +656,6 @@ func AllTables() map[string]TableDef {
 			},
 		},
 		{
-			Name: "purchase_requisitions", Label: "Purchase Requisition", PrimaryKey: "prq_id", TitleColumn: "prq_doc_number", ReferenceCols: []string{"prq_id", "prq_doc_number", "prq_status"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "prq_doc_number", ImportEnabled: true,
-			Subtable: &SubtableDef{Table: "prq_components", ForeignKey: "prq_id", ParentLabel: "Selected Requisition"},
-			Fields: []Field{
-				{Column: "prq_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "prq_doc_number", Label: "doc_number", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "prq_date", Label: "date", Kind: KindDate, Editable: true, List: true, Sortable: true}, {Column: "prq_needed_by", Label: "needed_by", Kind: KindDate, Editable: true, List: true, Sortable: true}, {Column: "prq_department", Label: "department", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "sup_id", Label: "suggested_supplier", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "suppliers"}, {Column: "usr_id", Label: "requester", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "prq_status", Label: "status", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: requisitionStatuses}, {Column: "prq_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "prq_total_minor", Label: "total_minor", Kind: KindInteger, List: true, Sortable: true}, {Column: "por_id", Label: "purchase_order", Kind: KindForeign, List: true, Sortable: true, RefTable: "purchase_orders"}, {Column: "prq_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
-			},
-		},
-		{
-			Name: "prq_components", Label: "Requisition Line", PrimaryKey: "prc_id", TitleColumn: "prc_id", ReferenceCols: []string{"prc_id"}, ParentTable: "purchase_requisitions", ParentField: "prq_id", ParentLabel: "Selected Requisition", ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "prc_id", ImportEnabled: true,
-			Fields: []Field{
-				{Column: "prc_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "prq_id", Label: "requisition", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "purchase_requisitions"}, {Column: "itm_id", Label: "item", Kind: KindForeign, Required: true, Editable: true, List: true, Sortable: true, RefTable: "items"}, {Column: "prc_qty", Label: "qty", Kind: KindReal, Editable: true, List: true, Sortable: true}, {Column: "prc_price", Label: "price", Kind: KindReal, Editable: true, List: true, Sortable: true}, {Column: "prc_currency", Label: "currency", Kind: KindEnum, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "prc_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
-			},
-		},
-		{
 			Name: "approval_rules", Label: "Approval Rule", PrimaryKey: "apr_id", TitleColumn: "apr_role", ReferenceCols: []string{"apr_id", "apr_role", "apr_min_amount_minor"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin"}, DefaultSort: "apr_step", ImportEnabled: true,
 			Fields: []Field{
 				{Column: "apr_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apr_source_type", Label: "source_type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: approvalSources}, {Column: "apr_step", Label: "step", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "apr_role", Label: "approver_role", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: roleOptions}, {Column: "apr_min_amount_minor", Label: "min_amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "apr_status", Label: "status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: quoteStatusOptions}, {Column: "apr_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
@@ -671,6 +667,14 @@ func AllTables() map[string]TableDef {
 			Name: "approvals", Label: "Approval", PrimaryKey: "apv_id", TitleColumn: "apv_status", ReferenceCols: []string{"apv_id", "apv_status", "apv_role"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: nil, DefaultSort: "apv_id",
 			Fields: []Field{
 				{Column: "apv_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_source_type", Label: "source_type", Kind: KindEnum, List: true, Sortable: true, Options: approvalSources}, {Column: "apv_source_id", Label: "source_id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_step", Label: "step", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_role", Label: "approver_role", Kind: KindEnum, List: true, Sortable: true, Options: roleOptions}, {Column: "apv_status", Label: "status", Kind: KindEnum, List: true, Sortable: true, Options: approvalStatuses}, {Column: "apv_decided_by", Label: "decided_by", Kind: KindForeign, List: true, Sortable: true, RefTable: "users"}, {Column: "apv_decided_at", Label: "decided_at", Kind: KindText, List: true, Sortable: true}, {Column: "apv_note", Label: "note", Kind: KindTextarea, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
+			},
+		},
+		{
+			// Status history is an audit trail: rows are written by the store whenever a
+			// purchase order's status changes, never through the table API.
+			Name: "po_status_history", Label: "PO Status History", PrimaryKey: "psh_id", TitleColumn: "psh_status", ReferenceCols: []string{"psh_id", "psh_status", "created_at"}, ParentTable: "purchase_orders", ParentField: "por_id", ParentLabel: "Selected Purchase Order", ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: nil, DefaultSort: "psh_id",
+			Fields: []Field{
+				{Column: "psh_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "por_id", Label: "purchase_order", Kind: KindForeign, List: true, Sortable: true, RefTable: "purchase_orders"}, {Column: "psh_previous_status", Label: "previous_status", Kind: KindEnum, List: true, Sortable: true, Options: poStatusOptions}, {Column: "psh_status", Label: "status", Kind: KindEnum, List: true, Sortable: true, Options: poStatusOptions}, {Column: "psh_payment_status", Label: "payment_status", Kind: KindEnum, List: true, Sortable: true, Options: paymentStatusOptions}, {Column: "usr_id", Label: "changed_by", Kind: KindForeign, List: true, Sortable: true, RefTable: "users"}, {Column: "psh_note", Label: "note", Kind: KindTextarea, List: true}, {Column: "created_at", Label: "changed_at", Kind: KindText, List: true, Sortable: true},
 			},
 		},
 		{
