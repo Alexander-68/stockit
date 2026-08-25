@@ -30,6 +30,9 @@ var tableMethods = map[string]string{
 	"quotes":                "GET",
 	"quote_components":      "GET",
 	"purchase_orders":       "GET POST PUT DELETE",
+	"purchase_requisitions": "GET POST PUT DELETE",
+	"prq_components":        "GET POST PUT DELETE",
+	"approvals":             "GET",
 	"po_components":         "GET POST PUT DELETE",
 	"financial_obligations": "GET POST PUT DELETE",
 }
@@ -47,6 +50,15 @@ type app struct {
 type session struct {
 	token string
 	user  string
+	role  string
+}
+
+// workflowActions whitelists the StockIt approval endpoints this app may call.
+// Each entry is "<collection>/<action>"; StockIt still enforces role and state.
+var workflowActions = map[string]bool{
+	"purchase_requisitions/submit":         true,
+	"purchase_requisitions/purchase_order": true,
+	"approvals/decide":                     true,
 }
 
 type loginRequest struct {
@@ -57,6 +69,7 @@ type loginRequest struct {
 type stockitLoginResponse struct {
 	Token string `json:"token"`
 	User  string `json:"user"`
+	Role  string `json:"role"`
 }
 
 func main() {
@@ -90,6 +103,8 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /logout", a.handleLogout)
 	mux.HandleFunc("GET /api/me", a.handleMe)
 	mux.HandleFunc("/api/tables/", a.handleProxy)
+	mux.HandleFunc("POST /api/purchase_requisitions/{id}/{action}", a.handleWorkflowProxy)
+	mux.HandleFunc("POST /api/approvals/{id}/{action}", a.handleWorkflowProxy)
 	return mux
 }
 
@@ -144,10 +159,10 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
-	a.sessions[appToken] = session{token: login.Token, user: login.User}
+	a.sessions[appToken] = session{token: login.Token, user: login.User, role: login.Role}
 	a.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: appToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.secureCookies || r.TLS != nil})
-	writeJSON(w, http.StatusOK, map[string]string{"user": login.User})
+	writeJSON(w, http.StatusOK, map[string]string{"user": login.User, "role": login.Role})
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +190,7 @@ func (a *app) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"user": current.user})
+	writeJSON(w, http.StatusOK, map[string]string{"user": current.user, "role": current.role})
 }
 
 // handleProxy forwards whitelisted /api/tables requests to StockIt with the
@@ -200,6 +215,29 @@ func (a *app) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
+	a.forward(w, r, appToken, current, target)
+}
+
+// handleWorkflowProxy forwards the whitelisted StockIt approval actions. Path
+// shape is fixed by the route, so only the collection and action need checking.
+func (a *app) handleWorkflowProxy(w http.ResponseWriter, r *http.Request) {
+	appToken, current, ok := a.sessionFromRequest(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
+		return
+	}
+	collection, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/"), "/")
+	id, action := r.PathValue("id"), r.PathValue("action")
+	if !workflowActions[collection+"/"+action] || id == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not allowed"})
+		return
+	}
+	a.forward(w, r, appToken, current, a.stockitURL+"/api/"+collection+"/"+url.PathEscape(id)+"/"+action)
+}
+
+// forward relays one request to StockIt with the session's bearer token and
+// copies the response back, dropping the local session when StockIt rejects it.
+func (a *app) forward(w http.ResponseWriter, r *http.Request, appToken string, current session, target string) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
 	if err != nil {

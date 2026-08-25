@@ -57,6 +57,14 @@ func newFakeStockIt(t *testing.T) *httptest.Server {
 				t.Errorf("create payload not forwarded: %s", payload)
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{"table": "purchase_orders", "row": map[string]any{"por_id": 7, "por_doc_number": "PO-1"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/purchase_requisitions/7/submit":
+			writeJSON(w, http.StatusOK, map[string]any{"requisition_id": 7, "status": "submitted"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/approvals/3/decide":
+			payload, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(payload), "approved") {
+				t.Errorf("decision not forwarded: %s", payload)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"requisition_status": "approved"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/tables/po_components":
 			if r.URL.Query().Get("parent_id") != "7" {
 				t.Errorf("parent_id query not forwarded: %s", r.URL.RawQuery)
@@ -164,5 +172,51 @@ func TestAssetsProxyIsPublic(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "stockit-login-card") {
 		t.Fatalf("assets proxy did not forward StockIt CSS: %s", body)
+	}
+}
+
+// TestWorkflowProxyForwardsWhitelistedActions covers the approval endpoints, which
+// live outside /api/tables and so need their own whitelist.
+func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
+	stockit := newFakeStockIt(t)
+	defer stockit.Close()
+	appServer := httptest.NewServer(newApp(stockit.URL, stockit.Client()).handler())
+	defer appServer.Close()
+	client := loggedInClient(t, appServer)
+
+	submit, err := client.Post(appServer.URL+"/api/purchase_requisitions/7/submit", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = submit.Body.Close()
+	if submit.StatusCode != http.StatusOK {
+		t.Fatalf("submit returned %d, want 200", submit.StatusCode)
+	}
+
+	decide, err := client.Post(appServer.URL+"/api/approvals/3/decide", "application/json", strings.NewReader(`{"decision":"approved"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = decide.Body.Close()
+	if decide.StatusCode != http.StatusOK {
+		t.Fatalf("decide returned %d, want 200", decide.StatusCode)
+	}
+
+	blocked, err := client.Post(appServer.URL+"/api/approvals/3/delete", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = blocked.Body.Close()
+	if blocked.StatusCode != http.StatusForbidden {
+		t.Fatalf("unlisted workflow action returned %d, want 403", blocked.StatusCode)
+	}
+
+	anonymous, err := http.Post(appServer.URL+"/api/purchase_requisitions/7/submit", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = anonymous.Body.Close()
+	if anonymous.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous workflow request returned %d, want 401", anonymous.StatusCode)
 	}
 }
