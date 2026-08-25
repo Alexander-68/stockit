@@ -98,6 +98,9 @@ type apiErrorResponse struct {
 type apiMeResponse struct {
 	User string `json:"user"`
 	Role string `json:"role"`
+	// ApprovalLimitMinor is the largest purchase order this user may approve, in
+	// integer minor units. Zero means no approval authority.
+	ApprovalLimitMinor int64 `json:"approval_limit_minor"`
 }
 
 type apiTableListEnvelope struct {
@@ -624,6 +627,11 @@ func validateBusinessRules(table store.TableDef, values map[string]any) error {
 func classifyStoreError(err error) int {
 	if err == nil {
 		return 0
+	}
+	// A workflow rule the store enforces (a status only the approve endpoint may
+	// set) is the caller's mistake, not a server fault.
+	if status := workflowStatus(err); status != 500 {
+		return status
 	}
 	msg := err.Error()
 	switch {

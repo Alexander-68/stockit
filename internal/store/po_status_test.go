@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 )
@@ -161,49 +162,97 @@ func TestReceiptQuantitiesDerivePurchaseOrderStatus(t *testing.T) {
 	}
 }
 
-func TestPurchaseOrderApprovalWorkflow(t *testing.T) {
+func TestPurchaseOrderApprovalUsesSigningLimit(t *testing.T) {
 	s := openTestStore(t)
 	defer func() { _ = s.Close() }()
 
 	ctx := WithActor(context.Background(), 1)
-	if _, err := s.Insert(ctx, "approval_rules", map[string]any{
-		"apr_source_type": "purchase_order", "apr_step": 1, "apr_role": "admin",
-		"apr_min_amount_minor": 10_000, "apr_status": "active",
-	}); err != nil {
-		t.Fatalf("insert approval rule: %v", err)
+	purchaseOrder := mustParseInt(t, seedPurchaseOrder(t, s, ctx, 10, 50)) // 500.00 = 50_000 minor
+
+	// A buyer whose limit falls short may not approve, and may not reject either.
+	buyer, err := s.Insert(ctx, "users", map[string]any{
+		"usr_login_name": "buyer", "usr_password": "x", "usr_role": "user", "usr_approval_limit_minor": 10_000,
+	})
+	if err != nil {
+		t.Fatalf("insert buyer: %v", err)
+	}
+	if _, err := s.DecidePurchaseOrder(ctx, purchaseOrder, buyer, true, ""); !errors.Is(err, ErrWorkflowForbidden) {
+		t.Fatalf("approve over limit err = %v, want ErrWorkflowForbidden", err)
+	}
+	if _, err := s.DecidePurchaseOrder(ctx, purchaseOrder, buyer, false, ""); !errors.Is(err, ErrWorkflowForbidden) {
+		t.Fatalf("reject over limit err = %v, want ErrWorkflowForbidden", err)
 	}
 
-	purchaseOrder := seedPurchaseOrder(t, s, ctx, 10, 50)
-	submission, err := s.SubmitPurchaseOrder(ctx, mustParseInt(t, purchaseOrder))
+	// A user with no limit at all has no authority.
+	none, err := s.Insert(ctx, "users", map[string]any{
+		"usr_login_name": "nolimit", "usr_password": "x", "usr_role": "user",
+	})
 	if err != nil {
-		t.Fatalf("submit purchase order: %v", err)
+		t.Fatalf("insert user: %v", err)
 	}
-	if submission.Status != "pending_approval" || submission.TotalMinor != 50_000 || len(submission.Approvals) != 1 {
+	if _, err := s.DecidePurchaseOrder(ctx, purchaseOrder, none, true, ""); !errors.Is(err, ErrWorkflowForbidden) {
+		t.Fatalf("approve with no limit err = %v, want ErrWorkflowForbidden", err)
+	}
+
+	// Submitting parks the order and prices it.
+	submission, err := s.SubmitPurchaseOrder(ctx, purchaseOrder)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if submission.Status != "pending_approval" || submission.TotalMinor != 50_000 {
 		t.Fatalf("unexpected submission: %+v", submission)
 	}
-	if _, err := s.SubmitPurchaseOrder(ctx, mustParseInt(t, purchaseOrder)); err == nil {
-		t.Fatal("expected a second submit of a routing order to be refused")
-	}
 
-	approvalID := int64(submission.Approvals[0]["apv_id"].(int64))
-	if _, err := s.DecideApproval(ctx, approvalID, "user", 2, true, ""); err == nil {
-		t.Fatal("expected the wrong role to be refused")
-	}
-	decision, err := s.DecideApproval(ctx, approvalID, "admin", 1, true, "budget ok")
+	// The seeded admin's limit covers anything.
+	decision, err := s.DecidePurchaseOrder(ctx, purchaseOrder, 1, true, "budget ok")
 	if err != nil {
-		t.Fatalf("decide: %v", err)
+		t.Fatalf("approve as admin: %v", err)
 	}
-	if decision.Status != "approved" || decision.SourceType != "purchase_order" {
+	if decision.Status != "approved" || decision.TotalMinor != 50_000 {
 		t.Fatalf("unexpected decision: %+v", decision)
 	}
-	if status := poStatus(t, s, ctx, purchaseOrder); status != "approved" {
-		t.Fatalf("purchase order status = %q, want approved", status)
+	if decision.ApprovalLimitMinor != AdminApprovalLimitMinor {
+		t.Fatalf("admin limit = %d, want %d", decision.ApprovalLimitMinor, AdminApprovalLimitMinor)
 	}
 
-	rows := poHistory(t, s, ctx, purchaseOrder)
+	rows := poHistory(t, s, ctx, strconv.FormatInt(purchaseOrder, 10))
 	last := rows[len(rows)-1]
-	if last["psh_status"] != "approved" || last["psh_note"] != "approval step 1 approved: budget ok" {
+	if last["psh_status"] != "approved" || last["psh_note"] != "budget ok" || last["usr_id"] != int64(1) {
 		t.Fatalf("approval not recorded in history: %+v", last)
+	}
+
+	// A decided order is not decided twice.
+	if _, err := s.DecidePurchaseOrder(ctx, purchaseOrder, 1, true, ""); !errors.Is(err, ErrWorkflow) {
+		t.Fatalf("second decision err = %v, want ErrWorkflow", err)
+	}
+}
+
+// TestDecidedStatusesAreNotWritableDirectly guards the signing limit: without
+// this, anyone could set approved straight through the table API.
+func TestDecidedStatusesAreNotWritableDirectly(t *testing.T) {
+	s := openTestStore(t)
+	defer func() { _ = s.Close() }()
+
+	ctx := WithActor(context.Background(), 1)
+	purchaseOrder := seedPurchaseOrder(t, s, ctx, 1, 1)
+
+	for _, status := range []string{"approved", "rejected"} {
+		if err := s.Update(ctx, "purchase_orders", purchaseOrder, map[string]any{"por_status": status}); !errors.Is(err, ErrWorkflow) {
+			t.Fatalf("update to %q err = %v, want ErrWorkflow", status, err)
+		}
+		if _, err := s.SetPOStatus(ctx, mustParseInt(t, purchaseOrder), status, "", ""); !errors.Is(err, ErrWorkflow) {
+			t.Fatalf("SetPOStatus %q err = %v, want ErrWorkflow", status, err)
+		}
+		if _, err := s.Insert(ctx, "purchase_orders", map[string]any{
+			"por_doc_number": "SNEAK-" + status, "por_status": status,
+		}); !errors.Is(err, ErrWorkflow) {
+			t.Fatalf("insert with %q err = %v, want ErrWorkflow", status, err)
+		}
+	}
+
+	// Every other transition stays free.
+	if _, err := s.SetPOStatus(ctx, mustParseInt(t, purchaseOrder), "on_hold", "", "waiting on budget"); err != nil {
+		t.Fatalf("free transition refused: %v", err)
 	}
 }
 
@@ -292,11 +341,11 @@ func mustParseInt(t *testing.T, value string) int64 {
 	return parsed
 }
 
-// TestLegacyRequisitionTablesAreDropped opens a database shaped like the one a
+// TestRetiredApprovalTablesAreDropped opens a database shaped like the one a
 // pre-removal build wrote — requisition tables, a purchase_orders.prq_id link,
-// and requisition approval rows — and checks the migration clears them without
-// losing purchase orders or their lines.
-func TestLegacyRequisitionTablesAreDropped(t *testing.T) {
+// and the amount-routing approval tables — and checks the migration clears them
+// without losing purchase orders or their lines.
+func TestRetiredApprovalTablesAreDropped(t *testing.T) {
 	dbPath := t.TempDir() + "/stockit.db"
 	ctx := context.Background()
 
@@ -313,10 +362,10 @@ func TestLegacyRequisitionTablesAreDropped(t *testing.T) {
 		`INSERT INTO items (itm_id, itm_sku, itm_status) VALUES (1, 'OLD-SKU', 'Active')`,
 		`INSERT INTO purchase_orders (por_id, por_doc_number, por_status, prq_id) VALUES (1, 'OLD-PO', 'issued', 7)`,
 		`INSERT INTO po_components (por_id, itm_id, poc_qty) VALUES (1, 1, 4)`,
-		`INSERT INTO approval_rules (apr_source_type, apr_step, apr_role, apr_min_amount_minor, apr_status)
-			VALUES ('purchase_requisition', 1, 'admin', 100, 'active')`,
-		`INSERT INTO approvals (apv_source_type, apv_source_id, apv_step, apv_role, apv_status)
-			VALUES ('purchase_requisition', 7, 1, 'admin', 'pending')`,
+		`CREATE TABLE approval_rules (apr_id INTEGER PRIMARY KEY AUTOINCREMENT, apr_source_type TEXT, apr_min_amount_minor INTEGER)`,
+		`CREATE TABLE approvals (apv_id INTEGER PRIMARY KEY AUTOINCREMENT, apv_source_type TEXT, apv_source_id INTEGER)`,
+		`INSERT INTO approval_rules (apr_source_type, apr_min_amount_minor) VALUES ('purchase_order', 100)`,
+		`INSERT INTO approvals (apv_source_type, apv_source_id) VALUES ('purchase_order', 1)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("seed legacy schema %q: %v", statement, err)
@@ -330,7 +379,7 @@ func TestLegacyRequisitionTablesAreDropped(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	for _, table := range []string{"purchase_requisitions", "prq_components"} {
+	for _, table := range []string{"purchase_requisitions", "prq_components", "approval_rules", "approvals"} {
 		var name string
 		err := s.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
 		if err == nil {
@@ -355,17 +404,6 @@ func TestLegacyRequisitionTablesAreDropped(t *testing.T) {
 	}
 	if len(lines.Rows) != 1 {
 		t.Fatalf("po line lost in rebuild: %+v", lines.Rows)
-	}
-
-	// Approval rules and steps that routed requisitions are cleared with them.
-	for _, table := range []string{"approval_rules", "approvals"} {
-		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil {
-			t.Fatalf("count %s: %v", table, err)
-		}
-		if count != 0 {
-			t.Fatalf("%s kept %d requisition rows", table, count)
-		}
 	}
 
 	// A fresh write still works after the rebuild.

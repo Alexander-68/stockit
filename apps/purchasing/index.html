@@ -112,10 +112,9 @@
           <label>Payment<select name="por_payment_status" id="payment-select"></select></label>
           <label>Note<input name="note" placeholder="Why the status changed"></label>
         </div>
-        <div class="controls" style="margin-top:.75rem"><button>Apply status change</button><button id="submit-po" class="secondary hidden" type="button">Submit for approval</button><span id="po-status-error" class="error" style="margin:0"></span></div>
+        <div class="controls" style="margin-top:.75rem"><button>Apply status change</button><button id="submit-po" class="secondary hidden" type="button">Submit for approval</button><button id="reject-po" class="danger hidden" type="button">Reject</button><span id="po-status-error" class="error" style="margin:0"></span></div>
       </form>
-      <div id="po-approvals"></div>
-      <p id="po-approvals-error" class="error"></p>
+      <p id="po-approval-hint" class="muted"></p>
       <div class="section-head" style="margin-top:1rem"><h2>Status history</h2><span id="po-history-count" class="muted"></span></div>
       <div id="po-history"></div>
     </section>
@@ -200,6 +199,7 @@
     // Lifecycle statuses mirror StockIt's poStatusOptions, in workflow order.
     const PO_STATUSES = ['draft', 'pending_approval', 'approved', 'rejected', 'issued', 'confirmed', 'partially_received', 'received', 'invoiced', 'closed', 'on_hold', 'pending_revision', 'cancelled'];
     const PAYMENT_STATUSES = ['unpaid', 'partially_paid', 'paid', 'refunded'];
+    const DECIDED_STATUSES = ['approved', 'rejected'];
     const OBLIGATION_STATUSES = ['planned', 'due', 'paid', 'cancelled'];
     const SUPPLIER_STATUSES = ['Draft', 'Under Review', 'Active', 'Inactive', 'Hold', 'Phase-Out', 'Obsolete'];
     const SUPPLIER_FIELDS = ['sup_code', 'sup_name_en', 'sup_name_zh', 'sup_type', 'sup_contact_name', 'sup_contact_phone', 'sup_contact_email', 'sup_website', 'sup_vat_number', 'sup_bank_name', 'sup_bank_account', 'sup_status', 'sup_address_en', 'sup_note'];
@@ -214,8 +214,7 @@
 
     let suppliers = [], items = [], orders = [], currentPO = null, currentSupplier = null;
     let lines = [], schedule = [], priceList = {}, orderTotals = {};
-    let currentRole = '';
-    let poApprovals = [], poHistory = [], poApprovalRules = [];
+    let poHistory = [], approvalLimitMinor = 0;
     let sort = { key: 'por_doc_date', desc: true };
 
     async function api(method, path, body) {
@@ -342,8 +341,8 @@
 
     // --- purchase order editor ---
     async function openPO(id) {
-      currentPO = null; lines = []; schedule = []; priceList = {}; poApprovals = []; poHistory = [];
-      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning', '#duplicate-note', '#po-status-error', '#po-approvals-error']) $(id).textContent = '';
+      currentPO = null; lines = []; schedule = []; priceList = {}; poHistory = [];
+      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning', '#duplicate-note', '#po-status-error', '#po-approval-hint']) $(id).textContent = '';
       if (id != null) {
         try {
           const record = await api('GET', `/api/tables/purchase_orders/${id}`);
@@ -358,19 +357,22 @@
       form.por_ship_date.value = po.por_ship_date || '';
       form.por_paid_date.value = po.por_paid_date || '';
       form.por_currency.value = po.por_currency || 'USD';
-      $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'draft');
+      // approved and rejected are set by deciding the order, never by a status change.
+      $('#status-select').innerHTML = options(PO_STATUSES.filter(status => !DECIDED_STATUSES.includes(status) || status === po.por_status), po.por_status || 'draft');
       $('#payment-select').innerHTML = options(PAYMENT_STATUSES, po.por_payment_status || 'unpaid');
       $('#po-status-form').note.value = '';
       form.por_note.value = po.por_note || '';
       $('#edit-title').textContent = currentPO ? `Purchase order ${currentPO.por_doc_number}` : 'New purchase order';
       for (const id of ['#delete-po', '#print', '#duplicate-po', '#lines-section', '#schedule-section', '#po-status-section']) $(id).classList.toggle('hidden', !currentPO);
-      // Only a draft order can enter approval routing; afterwards the workflow owns the status.
-      $('#submit-po').classList.toggle('hidden', !currentPO || (po.por_status || 'draft') !== 'draft');
+      // Approval is open while the order is a draft or waiting for a decision.
+      const decidable = currentPO && ['draft', 'pending_approval'].includes(po.por_status || 'draft');
+      $('#submit-po').classList.toggle('hidden', !decidable);
+      $('#reject-po').classList.toggle('hidden', !decidable);
       $('#po-status-label').textContent = currentPO
         ? `Status ${po.por_status || 'draft'}; payment ${po.por_payment_status || 'unpaid'}${po.por_total_minor == null ? '' : `; approved total ${number(po.por_total_minor / 100)} ${po.por_currency || ''}`}`
         : '';
       show('edit');
-      if (currentPO) await Promise.all([loadLines(), loadSchedule(), loadPriceList(currentPO.sup_id), loadPOApprovals(), loadPOHistory()]);
+      if (currentPO) await Promise.all([loadLines(), loadSchedule(), loadPriceList(currentPO.sup_id), loadPOHistory()]);
     }
 
     function formPayload(form, fields) {
@@ -445,18 +447,24 @@
       labelSubmitButton();
     }
 
-    // Submitting only routes the order when an active approval rule matches its
-    // amount; with no matching rule StockIt approves it outright, so the button
-    // says what it will actually do. StockIt prices the order the same way:
+    // Approval authority is your own signing limit. Covering the order total
+    // means you approve it in one click; otherwise you submit it and someone
+    // with a bigger limit decides. StockIt prices the order the same way:
     // round(sum(qty * price) * 100), across every line regardless of currency.
+    const orderTotalMinor = () => Math.round(lines.reduce((sum, line) => sum + (line.poc_qty || 0) * (line.poc_price || 0), 0) * 100);
+
     function labelSubmitButton() {
-      const totalMinor = Math.round(lines.reduce((sum, line) => sum + (line.poc_qty || 0) * (line.poc_price || 0), 0) * 100);
-      const routed = poApprovalRules.some(rule => (rule.apr_min_amount_minor || 0) <= totalMinor);
+      const totalMinor = orderTotalMinor();
+      const mine = approvalLimitMinor > 0 && totalMinor <= approvalLimitMinor;
       const button = $('#submit-po');
-      button.textContent = routed ? 'Submit for approval' : 'Approve';
-      button.title = routed
-        ? 'Routes this order through the approval steps its amount requires.'
-        : 'No approval rule matches this amount, so StockIt approves the order outright.';
+      button.textContent = mine ? 'Approve' : 'Submit for approval';
+      button.title = mine
+        ? `Your approval limit is ${number(approvalLimitMinor / 100)}, so you can approve this order yourself.`
+        : approvalLimitMinor > 0
+          ? `This order is ${number(totalMinor / 100)} and your approval limit is ${number(approvalLimitMinor / 100)}; it needs someone with more authority.`
+          : 'You have no approval authority, so this order goes to someone who has.';
+      $('#reject-po').classList.toggle('hidden', !mine || !currentPO);
+      $('#po-approval-hint').textContent = mine ? '' : button.title;
     }
     function saveLinePayload(line) {
       return {
@@ -569,42 +577,6 @@
     });
 
     // --- PO approvals, status history and status changes ---
-    async function loadPOApprovals() {
-      poApprovals = await listAll('approvals', { sort: 'apv_step', 'filter.apv_source_type': 'purchase_order', 'filter.apv_source_id': currentPO.por_id });
-      const firstPending = poApprovals.find(approval => approval.apv_status === 'pending');
-      $('#po-approvals').innerHTML = poApprovals.length ? `<table><thead><tr><th class="num">Step</th><th>Approver role</th><th>Status</th><th>Decided by</th><th>Decided at</th><th>Note</th><th></th></tr></thead><tbody>${
-        poApprovals.map((approval, index) => {
-          // Only the first pending step is decidable, and only by its own role.
-          const mine = approval === firstPending && approval.apv_role === currentRole;
-          return `<tr>
-            <td class="num">${number(approval.apv_step)}</td>
-            <td>${escape(approval.apv_role)}</td>
-            <td>${escape(approval.apv_status)}</td>
-            <td>${escape(approval.apv_decided_by)}</td>
-            <td>${escape(approval.apv_decided_at)}</td>
-            <td>${mine ? '<input class="approval-note" placeholder="Optional note">' : escape(approval.apv_note)}</td>
-            <td>${mine ? `<button data-approve="${index}" type="button">Approve</button> <button class="danger" data-reject="${index}" type="button">Reject</button>` : ''}</td>
-          </tr>`;
-        }).join('')
-      }</tbody></table>` : '<p class="muted">No approval steps: this order needed none.</p>';
-      if (!poApprovals.length) return;
-      $('#po-status-label').textContent += !firstPending ? '. All steps decided.'
-        : firstPending.apv_role === currentRole ? `. Waiting for your decision on step ${firstPending.apv_step}.`
-        : `. Waiting for role ${firstPending.apv_role} on step ${firstPending.apv_step}.`;
-    }
-
-    $('#po-approvals').addEventListener('click', async event => {
-      const { approve, reject } = event.target.dataset;
-      if (approve == null && reject == null) return;
-      const approval = poApprovals[approve ?? reject];
-      const note = $('#po-approvals').querySelector('.approval-note')?.value || '';
-      $('#po-approvals-error').textContent = '';
-      try {
-        await api('POST', `/api/approvals/${approval.apv_id}/decide`, { decision: approve != null ? 'approved' : 'rejected', note });
-        await openPO(currentPO.por_id);
-      } catch (error) { $('#po-approvals-error').textContent = error.message; }
-    });
-
     async function loadPOHistory() {
       poHistory = await listAll('po_status_history', { sort: 'psh_id', desc: true, parent_id: currentPO.por_id });
       $('#po-history').innerHTML = poHistory.length ? `<table><thead><tr><th>Changed at</th><th>From</th><th>To</th><th>Payment</th><th>By</th><th>Note</th></tr></thead><tbody>${
@@ -632,14 +604,24 @@
       } catch (error) { $('#po-status-error').textContent = error.message; }
     });
 
-    $('#submit-po').addEventListener('click', async () => {
+    // One button, two paths: approve within your own limit, or hand the order on.
+    async function decidePurchaseOrder(path, body) {
       if (!currentPO) return;
       $('#po-status-error').textContent = '';
       try {
-        const result = await api('POST', `/api/purchase_orders/${currentPO.por_id}/submit`);
+        await api('POST', `/api/purchase_orders/${currentPO.por_id}/${path}`, body);
         await openPO(currentPO.por_id);
-        if (result.status === 'approved') $('#po-status-label').textContent += `. Approved outright: ${number(result.total_minor / 100)} ${result.currency || ''} needs no approval step.`;
       } catch (error) { $('#po-status-error').textContent = error.message; }
+    }
+
+    $('#submit-po').addEventListener('click', () => {
+      const mine = approvalLimitMinor > 0 && orderTotalMinor() <= approvalLimitMinor;
+      const note = $('#po-status-form').note.value;
+      decidePurchaseOrder(mine ? 'approve' : 'submit', mine ? { decision: 'approved', note } : undefined);
+    });
+
+    $('#reject-po').addEventListener('click', () => {
+      decidePurchaseOrder('approve', { decision: 'rejected', note: $('#po-status-form').note.value });
     });
 
 
@@ -835,7 +817,7 @@
         if (!response.ok) { error.textContent = data.error || 'Login failed'; error.classList.remove('hidden'); return; }
         event.target.reset();
         $('#user').textContent = data.user;
-        currentRole = data.role || '';
+        approvalLimitMinor = data.approval_limit_minor || 0;
         await start();
       } catch (failure) { error.textContent = failure.message; error.classList.remove('hidden'); }
     });
@@ -849,13 +831,15 @@
       for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');
       for (const select of document.querySelectorAll('.obligation-status-select')) select.innerHTML = options(OBLIGATION_STATUSES, 'planned');
       $('#filter-payment').innerHTML = '<option value="">All payment tags</option>' + options(PAYMENT_STATUSES);
-      // Advisory only: a missing rule list just leaves the submit button on its default label.
-      try { poApprovalRules = await listAll('approval_rules', { sort: 'apr_step', 'filter.apr_source_type': 'purchase_order', 'filter.apr_status': 'active' }); }
-      catch { poApprovalRules = []; }
       await showList();
     }
     (async () => {
-      try { const me = await api('GET', '/api/me'); $('#user').textContent = me.user; currentRole = me.role || ''; await start(); }
+      try {
+        const me = await api('GET', '/api/me');
+        $('#user').textContent = me.user;
+        approvalLimitMinor = me.approval_limit_minor || 0;
+        await start();
+      }
       catch { showLogin(); }
     })();
   </script>

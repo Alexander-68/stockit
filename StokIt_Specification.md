@@ -109,7 +109,7 @@ MCP:
    - `stockit_update_record`
    - `stockit_delete_record`
    - `stockit_import_csv`
-   - `stockit_decide_approval`
+   - `stockit_approve_purchase_order`
 
 
 UI:
@@ -137,7 +137,7 @@ HTMX-like updates without full page refresh.
 
 Key Database Schema (SQLite): 
 
-* Users Table: usr\_id (unique), usr\_login\_name, usr\_password, usr\_role, usr\_note.
+* Users Table: usr\_id (unique), usr\_login\_name, usr\_password, usr\_role, usr\_approval\_limit\_minor (largest purchase order this user may approve, integer minor units; empty = no approval authority), usr\_note.
 * Customers: cus\_id (unique), cus\_name\_en, cus\_name\_zh, cus\_address\_en, cus\_address\_zh, cus\_phone, cus\_ship\_address\_en, cus\_ship\_address\_zh, cus\_contact\_name, cust\_contact\_email, cus\_note, Users:usr\_id, cus\_status (active, inactive).
 * Suppliers:  sup\_id (unique), sup\_code, sup\_name\_en, sup\_name\_zh, sup\_type (service,products…), sup\_contact\_name, sup\_contact\_phone, sup\_contact\_email, sup\_contact\_messanger, sup\_fax, sup\_address\_en, sup\_address\_zh, sup\_factory\_adress\_zh, sup\_website, sup\_catalogue\_url, sup\_bank\_name, sup\_bank\_account, sup\_vat\_number, sup\_certificates, sup\_note, Users:usr\_id, sup\_status.
 * Locations: loc\_id (unique), loc\_name, loc\_address\_en, loc\_address\_zh, loc\_zone (storage, assembly, …), loc\_note, Users:usr\_id, loc\_status.
@@ -158,8 +158,6 @@ Key Database Schema (SQLite):
 
   * PO components: poc\_id, POR:por\_id, Items:itm\_id, poc\_qty, poc\_price, poc\_currency (USD, TWD, CNY, EUR), poc\_shipped\_date, poc\_delivered\_date, poc\_delivered\_qty, poc\_received\_date, poc\_received\_qty, poc\_iqc\_date, poc\_iqc\_package, poc\_iqc\_qty\_inspected, poc\_iqc\_qty\_accepted, poc\_iqc\_qty\_rejected, Users:usr\_id (poc\_iqc\_person). (ON DELETE POR:por\_id CASCADE)
 
-* Approval Rule (APR): apr\_id(unique), apr\_source\_type (purchase\_order), apr\_step, apr\_role (admin, user, guest), apr\_min\_amount\_minor, apr\_status (active, inactive), apr\_note. Admin-only writes. A submitted purchase order gets one approval step per active rule whose amount it reaches, decided in `apr_step` order.
-* Approval (APV): apv\_id(unique), apv\_source\_type, apv\_source\_id, apv\_step, apv\_role, apv\_status (pending, approved, rejected), Users:apv\_decided\_by, apv\_decided\_at, apv\_note. Audit trail; written only by the approval endpoints, never through the generic table API.
 * Sales Order: sor\_id(unique), Customers:cus\_id, sor\_doc\_number, sor\_doc\_date, sor\_ship\_date, sor\_paid\_date, Users:usr\_id, sor\_status (confirmed, preparing, prepared, shipped, paid, complete, inactive), sor\_note.
 
   * Sales Order components: soc\_id, Sales Order:sor\_id, Items:itm\_id, sor\_qty, sor\_price, sor\_currency (USD, TWD, CNY, EUR), sor\_ship\_date, sor\_shipped\_date, sor\_shipped\_qty, sor\_shipped\_trackno, soc\_note. (ON DELETE Sales Order:sor\_id CASCADE)
@@ -187,7 +185,9 @@ Notes:
 * for status fields: Draft, Under Review, Active, Inactive, Hold, Phase-Out, Obsolete.
 * root `openapi.yaml` is the maintained REST API contract.
 * list endpoints filter server-side: `filter.<column>` (equality), `from.<column>` / `to.<column>` (inclusive range), `q` (substring across the table's text columns). Unknown columns are rejected.
-* purchase order approval is the one workflow StockIt owns: `POST /api/purchase_orders/{id}/submit`, `POST /api/approvals/{id}/decide`, `POST /api/purchase_orders/{id}/status`, each mirrored by an MCP tool. Order totals are integer minor units, computed as `round(sum(qty * price) * 100)`.
-* purchase requisitions were removed; purchasing drafts purchase orders directly. Opening a pre-removal database drops `purchase_requisitions`, `prq_components`, the `purchase_orders.prq_id` link (purchase_orders is rebuilt without it) and every requisition approval rule and step; purchase orders, their lines and their history survive.
+* purchase order approval is the one workflow StockIt owns: `POST /api/purchase_orders/{id}/submit`, `POST /api/purchase_orders/{id}/approve`, `POST /api/purchase_orders/{id}/status`, each mirrored by an MCP tool. Order totals are integer minor units, computed as `round(sum(qty * price) * 100)`.
+* approval authority is a per-user signing limit, `users.usr_approval_limit_minor` — the largest order that user may approve. Empty means none; the seeded admin carries a ceiling above any realistic order. Approval is single-step: cover the total and you approve from draft in one call, otherwise you submit and someone with a bigger limit decides. Self-approval within your own limit is allowed.
+* `approved` and `rejected` are settable only through the approve endpoint; the table API and `/status` refuse them, so the signing limit cannot be bypassed. Every other transition stays free.
+* purchase requisitions and the amount-routing approval tables were removed. Opening a pre-removal database drops `purchase_requisitions`, `prq_components`, `approval_rules`, `approvals` and the `purchase_orders.prq_id` link (purchase_orders is rebuilt without it); purchase orders, their lines and their status history survive.
 * purchase-order status transitions are deliberately unrestricted; the recorded history in `po_status_history` is the control, not a state machine.
 * the bundled web UI and every app under `apps/` carry a version stamp formatted `1.0.YYMMDD`, bumped on each code change.

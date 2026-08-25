@@ -14,16 +14,12 @@ func TestMCPApprovalToolsAndListFilters(t *testing.T) {
 	sessionID := initMCPSession(t, client, ts.URL, loginResp.Token)
 
 	tools := mcpListTools(t, client, ts.URL, loginResp.Token, sessionID)
-	for _, name := range []string{mcpToolSubmitPO, mcpToolDecideApproval, mcpToolSetPOStatus} {
+	for _, name := range []string{mcpToolSubmitPO, mcpToolApprovePO, mcpToolSetPOStatus} {
 		if !slices.Contains(tools, name) {
 			t.Fatalf("admin tools/list missing %q: %v", name, tools)
 		}
 	}
 
-	createRecord(t, client, loginResp.Token, ts.URL, "approval_rules", map[string]any{
-		"apr_source_type": "purchase_order", "apr_step": 1, "apr_role": "admin",
-		"apr_min_amount_minor": 10_000, "apr_status": "active",
-	})
 	purchaseOrder := seedApprovalFixture(t, client, loginResp.Token, ts.URL, "RV-MCP-PO", 250)
 
 	submitResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolSubmitPO, map[string]any{
@@ -33,14 +29,8 @@ func TestMCPApprovalToolsAndListFilters(t *testing.T) {
 	if !ok || submission["status"] != "pending_approval" {
 		t.Fatalf("submit tool payload unexpected: %+v", submitResult)
 	}
-	approvals, ok := submission["approvals"].([]any)
-	if !ok || len(approvals) != 1 {
-		t.Fatalf("submit tool created %v approval steps, want 1", submission["approvals"])
-	}
-	approvalID := jsonNumberString(t, approvals[0].(map[string]any)["apv_id"])
-
-	decideResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolDecideApproval, map[string]any{
-		"approval_id": approvalID, "decision": "approved",
+	decideResult := mcpCallTool(t, client, ts.URL, loginResp.Token, sessionID, mcpToolApprovePO, map[string]any{
+		"purchase_order_id": purchaseOrder, "decision": "approved",
 	})
 	decision, ok := decideResult["structuredContent"].(map[string]any)
 	if !ok || decision["status"] != "approved" {

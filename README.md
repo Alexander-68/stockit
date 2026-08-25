@@ -9,7 +9,7 @@ StockIt is a secure system of record for external web apps and smart tools throu
 ## Implemented Initial MVP
 
 - SQLite schema initialization for:
-  - `users`
+  - `users` with a per-user purchase approval limit
   - `customers`
   - `suppliers`
   - `locations`
@@ -70,7 +70,7 @@ StockIt is a secure system of record for external web apps and smart tools throu
   - `stockit_update_record`
   - `stockit_delete_record`
   - `stockit_import_csv`
-  - `stockit_decide_approval`
+  - `stockit_approve_purchase_order`
   - `stockit_submit_purchase_order`
   - `stockit_set_purchase_order_status`
 - Root `openapi.yaml` maintained as the REST API contract.
@@ -79,12 +79,14 @@ Purchase order lifecycle:
 
 - `por_status` runs through internal sign-off (`draft`, `pending_approval`, `approved`, `rejected`), vendor engagement and fulfilment (`issued`, `confirmed`, `partially_received`, `received`), accounting closure (`invoiced`, `closed`), and three exception states reachable at any point (`on_hold`, `pending_revision`, `cancelled`).
 - `por_payment_status` is a separate financial tag: `unpaid`, `partially_paid`, `paid`, `refunded`. It is deliberately independent of the lifecycle, so a closed order can still be unpaid.
-- A draft order submits for approval through `approval_rules` rows with `apr_source_type = purchase_order`. Submission prices the order from its lines into `por_total_minor` and moves it to `pending_approval`; the last approval sets `approved`, a rejection sets `rejected`. An order matching no rule is approved outright.
+- Approval authority is a per-user signing limit, `users.usr_approval_limit_minor`: the largest order that user may approve, in integer minor units. An empty limit means no authority. The seeded `admin` carries a ceiling above any realistic order, so a fresh install can approve out of the box.
+- Approving or rejecting reprices the order from its lines and checks that total against the deciding user's own limit. If your limit covers the order you approve it in one step from `draft`; if it does not, you submit it, it waits at `pending_approval`, and someone with a bigger limit decides. Approving your own order within your limit is allowed — that is what a signing limit means.
+- `approved` and `rejected` are reachable **only** through `POST /api/purchase_orders/{id}/approve`. Writing them through the table API or `/status` is refused, so the limit cannot be walked around. Every other transition stays free.
 - Every status or payment-tag change is appended to `po_status_history` with the previous status, the new status, the acting user, the timestamp and an optional note. `POST /api/purchase_orders/{id}/status` is the way to record a note with the change; a plain `PUT` on the table records the change with no note.
 - `partially_received` and `received` are derived from the line receipt quantities in `po_components`. The derivation only moves an order already in the fulfilment part of the lifecycle (`issued`, `confirmed`, `partially_received`, `received`), so a draft or a closed order is never disturbed, and the derived change is recorded in the history like any other.
-- `po_status_history` and `approvals` rows are an audit trail: they are written only by the store and the approval endpoints, never through the generic table API.
+- `po_status_history` rows are an audit trail: they are written only by the store, never through the generic table API. One decision, one row — there is no separate approvals table.
 
-Purchase requisitions were removed: purchasing drafts purchase orders directly and the PO approval workflow above replaces the requisition one. On startup, a database written before the removal loses `purchase_requisitions`, `prq_components`, the `purchase_orders.prq_id` link (the table is rebuilt without it), and every `approval_rules` / `approvals` row with `apr_source_type`/`apv_source_type` = `purchase_requisition`. Purchase orders, their lines and their history are preserved.
+Purchase requisitions and amount-routing approval rules were removed: purchasing drafts purchase orders directly, and a per-user signing limit replaces multi-step routing. On startup, a database written before the removal loses `purchase_requisitions`, `prq_components`, `approval_rules`, `approvals`, and the `purchase_orders.prq_id` link (the table is rebuilt without it). Purchase orders, their lines and their status history are preserved.
 
 Databases written before the lifecycle statuses landed are migrated on startup: `sent` becomes `issued`, `prepared` and `shipped` become `confirmed`, `delivered` becomes `received`, `complete` becomes `closed`, `inactive` becomes `cancelled`, and `paid` becomes `closed` tagged `paid`. Orders with no payment tag default to `unpaid`.
 
@@ -176,9 +178,9 @@ Current REST endpoints:
 - `PUT /api/tables/{table}/{id}`
 - `DELETE /api/tables/{table}/{id}`
 - `POST /api/tables/{table}/import` (multipart `csv_file` upload)
-- `POST /api/approvals/{id}/decide`
 - `POST /api/purchase_orders/{id}/submit`
 - `POST /api/purchase_orders/{id}/status`
+- `POST /api/purchase_orders/{id}/approve`
 
 Current MCP transport:
 

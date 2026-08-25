@@ -12,7 +12,7 @@ import (
 	"stockit/internal/store"
 )
 
-type apiDecideApprovalRequest struct {
+type apiDecideRequest struct {
 	Decision string `json:"decision"`
 	Note     string `json:"note"`
 }
@@ -49,8 +49,8 @@ func parseWorkflowID(raw string) (int64, error) {
 	return id, nil
 }
 
-func (s *Server) apiDecideApproval(ctx context.Context, principal Principal, rawID, decision, note string) (store.ApprovalDecision, int, error) {
-	if _, status, err := s.resolveTableForRole(principal.Role, "approvals", false); err != nil {
+func (s *Server) apiDecidePurchaseOrder(ctx context.Context, principal Principal, rawID, decision, note string) (store.ApprovalDecision, int, error) {
+	if _, status, err := s.resolveTableForRole(principal.Role, "purchase_orders", true); err != nil {
 		return store.ApprovalDecision{}, status, err
 	}
 	id, err := parseWorkflowID(rawID)
@@ -61,7 +61,7 @@ func (s *Server) apiDecideApproval(ctx context.Context, principal Principal, raw
 	if decision != "approved" && decision != "rejected" {
 		return store.ApprovalDecision{}, http.StatusBadRequest, fmt.Errorf("decision must be \"approved\" or \"rejected\"")
 	}
-	result, err := s.store.DecideApproval(ctx, id, principal.Role, principal.UserID, decision == "approved", note)
+	result, err := s.store.DecidePurchaseOrder(ctx, id, principal.UserID, decision == "approved", note)
 	if err != nil {
 		return store.ApprovalDecision{}, workflowStatus(err), err
 	}
@@ -123,14 +123,14 @@ func (s *Server) handleAPISetPOStatus(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) handleAPIDecideApproval(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAPIDecidePurchaseOrder(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	var payload apiDecideApprovalRequest
+	var payload apiDecideRequest
 	if err := json.UnmarshalRead(r.Body, &payload); err != nil {
 		s.writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: "invalid JSON body"})
 		return
 	}
-	result, status, err := s.apiDecideApproval(r.Context(), principal, r.PathValue("id"), payload.Decision, payload.Note)
+	result, status, err := s.apiDecidePurchaseOrder(r.Context(), principal, r.PathValue("id"), payload.Decision, payload.Note)
 	if err != nil {
 		s.writeJSON(w, status, apiErrorResponse{Error: err.Error()})
 		return

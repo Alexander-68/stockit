@@ -22,9 +22,9 @@ const (
 	mcpToolDeleteRecord = "stockit_delete_record"
 	mcpToolImportCSV    = "stockit_import_csv"
 
-	mcpToolDecideApproval = "stockit_decide_approval"
-	mcpToolSubmitPO       = "stockit_submit_purchase_order"
-	mcpToolSetPOStatus    = "stockit_set_purchase_order_status"
+	mcpToolApprovePO   = "stockit_approve_purchase_order"
+	mcpToolSubmitPO    = "stockit_submit_purchase_order"
+	mcpToolSetPOStatus = "stockit_set_purchase_order_status"
 )
 
 type mcpSubmitPOArgs struct {
@@ -38,10 +38,10 @@ type mcpSetPOStatusArgs struct {
 	Note            string `json:"note"`
 }
 
-type mcpDecideApprovalArgs struct {
-	ApprovalID string `json:"approval_id"`
-	Decision   string `json:"decision"`
-	Note       string `json:"note"`
+type mcpApprovePOArgs struct {
+	PurchaseOrderID string `json:"purchase_order_id"`
+	Decision        string `json:"decision"`
+	Note            string `json:"note"`
 }
 
 type mcpDescribeTableArgs struct {
@@ -105,7 +105,7 @@ func (s *Server) newMCPHandler() http.Handler {
 			for _, tool := range tools {
 				switch tool.Name {
 				case mcpToolCreateRecord, mcpToolUpdateRecord, mcpToolDeleteRecord, mcpToolImportCSV,
-					mcpToolDecideApproval, mcpToolSubmitPO, mcpToolSetPOStatus:
+					mcpToolApprovePO, mcpToolSubmitPO, mcpToolSetPOStatus:
 					continue
 				default:
 					filtered = append(filtered, tool)
@@ -250,16 +250,16 @@ func (s *Server) registerMCPTools(mcpSrv *mcpserver.MCPServer) {
 
 	mcpSrv.AddTool(
 		mcp.NewTool(
-			mcpToolDecideApproval,
-			mcp.WithDescription("Approve or reject one pending approval step. Only a user holding the step's role may decide it, and steps are decided in order."),
+			mcpToolApprovePO,
+			mcp.WithDescription("Approve or reject a draft or pending purchase order. The order is repriced from its lines and the caller's own approval limit (users.usr_approval_limit_minor) must cover that amount. This is the only way to set the approved or rejected status."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithSchemaAdditionalProperties(false),
-			mcp.WithString("approval_id", mcp.Required(), mcp.Description("approvals.apv_id")),
+			mcp.WithString("purchase_order_id", mcp.Required(), mcp.Description("purchase_orders.por_id")),
 			mcp.WithString("decision", mcp.Required(), mcp.Description("approved or rejected")),
-			mcp.WithString("note", mcp.Description("Optional decision note kept in the audit trail")),
+			mcp.WithString("note", mcp.Description("Optional decision note kept in the status history")),
 		),
-		s.handleMCPDecideApproval,
+		s.handleMCPApprovePO,
 	)
 
 	mcpSrv.AddTool(
@@ -302,7 +302,7 @@ func (s *Server) handleMCPSubmitPO(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return mcp.NewToolResultStructured(result, fmt.Sprintf("Purchase order %d is now %s with %d approval steps.", result.SourceID, result.Status, len(result.Approvals))), nil
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Purchase order %d is now %s, priced at %d minor units.", result.PurchaseOrderID, result.Status, result.TotalMinor)), nil
 }
 
 func (s *Server) handleMCPSetPOStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -447,19 +447,19 @@ func (s *Server) handleMCPImportCSV(ctx context.Context, request mcp.CallToolReq
 	return mcp.NewToolResultStructured(result, fmt.Sprintf("Imported %d rows into %s.", result.Imported, result.Table)), nil
 }
 
-func (s *Server) handleMCPDecideApproval(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args mcpDecideApprovalArgs
+func (s *Server) handleMCPApprovePO(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args mcpApprovePOArgs
 	if err := request.BindArguments(&args); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	principal := principalFromContext(ctx)
-	result, _, err := s.apiDecideApproval(ctx, principal, args.ApprovalID, args.Decision, args.Note)
+	result, _, err := s.apiDecidePurchaseOrder(store.WithActor(ctx, principal.UserID), principal, args.PurchaseOrderID, args.Decision, args.Note)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return mcp.NewToolResultStructured(result, fmt.Sprintf("Purchase order %d is now %s with %d approvals still pending.", result.SourceID, result.Status, result.RemainingApprovals)), nil
+	return mcp.NewToolResultStructured(result, fmt.Sprintf("Purchase order %d is now %s.", result.PurchaseOrderID, result.Status)), nil
 }
 
 func mcpListInput(args mcpListRecordsArgs) (tableListInput, error) {

@@ -117,7 +117,7 @@ func TestImportCSVAndBOMDeleteCascadesComponents(t *testing.T) {
 		"por_doc_number": "PO-001",
 		"por_doc_date":   "2026-03-26",
 		"itm_id":         finalItemID,
-		"por_status":     "approved",
+		"por_status":     "issued",
 		"por_note":       "Cascade purchase order",
 		"por_paid_date":  "2026-03-29",
 		"por_ship_date":  "2026-03-27",

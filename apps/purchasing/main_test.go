@@ -40,6 +40,10 @@ func newFakeStockIt(t *testing.T) *httptest.Server {
 			writeJSON(w, http.StatusOK, stockitLoginResponse{Token: "stockit-token", User: "user"})
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/me" {
+			writeJSON(w, http.StatusOK, map[string]any{"user": "user", "role": "user", "approval_limit_minor": 250000})
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/assets/") {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
 			_, _ = w.Write([]byte(".stockit-login-card{}"))
@@ -65,7 +69,7 @@ func newFakeStockIt(t *testing.T) *httptest.Server {
 				t.Errorf("status change not forwarded: %s", payload)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"table": "purchase_orders"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/approvals/3/decide":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/purchase_orders/9/approve":
 			payload, _ := io.ReadAll(r.Body)
 			if !strings.Contains(string(payload), "approved") {
 				t.Errorf("decision not forwarded: %s", payload)
@@ -190,13 +194,13 @@ func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
 	defer appServer.Close()
 	client := loggedInClient(t, appServer)
 
-	decide, err := client.Post(appServer.URL+"/api/approvals/3/decide", "application/json", strings.NewReader(`{"decision":"approved"}`))
+	decide, err := client.Post(appServer.URL+"/api/purchase_orders/9/approve", "application/json", strings.NewReader(`{"decision":"approved"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = decide.Body.Close()
 	if decide.StatusCode != http.StatusOK {
-		t.Fatalf("decide returned %d, want 200", decide.StatusCode)
+		t.Fatalf("approve returned %d, want 200", decide.StatusCode)
 	}
 
 	for _, action := range []string{"submit", "status"} {
@@ -219,15 +223,6 @@ func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
 		t.Fatalf("unlisted purchase order action returned %d, want 403", blockedPO.StatusCode)
 	}
 
-	blocked, err := client.Post(appServer.URL+"/api/approvals/3/delete", "application/json", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = blocked.Body.Close()
-	if blocked.StatusCode != http.StatusForbidden {
-		t.Fatalf("unlisted workflow action returned %d, want 403", blocked.StatusCode)
-	}
-
 	anonymous, err := http.Post(appServer.URL+"/api/purchase_orders/9/submit", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -235,5 +230,33 @@ func TestWorkflowProxyForwardsWhitelistedActions(t *testing.T) {
 	_ = anonymous.Body.Close()
 	if anonymous.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anonymous workflow request returned %d, want 401", anonymous.StatusCode)
+	}
+}
+
+// TestLoginCarriesApprovalLimit guards the signing limit reaching the browser:
+// the UI picks Approve or Submit from it, and it is read once at login.
+func TestLoginCarriesApprovalLimit(t *testing.T) {
+	stockit := newFakeStockIt(t)
+	defer stockit.Close()
+	appServer := httptest.NewServer(newApp(stockit.URL, stockit.Client()).handler())
+	defer appServer.Close()
+	client := loggedInClient(t, appServer)
+
+	for _, path := range []string{"/login", "/api/me"} {
+		var response *http.Response
+		var err error
+		if path == "/login" {
+			response, err = client.Post(appServer.URL+path, "application/json", strings.NewReader(`{"login_name":"a","password":"b"}`))
+		} else {
+			response, err = client.Get(appServer.URL + path)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if !strings.Contains(string(body), `"approval_limit_minor":250000`) {
+			t.Fatalf("%s did not carry the approval limit: %s", path, body)
+		}
 	}
 }

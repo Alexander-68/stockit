@@ -263,6 +263,9 @@ func (s *Store) Insert(ctx context.Context, tableName string, values map[string]
 	if !ok {
 		return 0, fmt.Errorf("unknown table %q", tableName)
 	}
+	if err := guardDecidedStatus(tableName, values); err != nil {
+		return 0, err
+	}
 
 	columns := table.InsertableColumns(values)
 	if len(columns) == 0 {
@@ -298,6 +301,21 @@ func (s *Store) Insert(ctx context.Context, tableName string, values map[string]
 	return id, s.afterWrite(ctx, table.Name, strconv.FormatInt(id, 10), poStatusSnapshot{})
 }
 
+// guardDecidedStatus keeps the signing limit meaningful: approved and rejected
+// are reachable only through DecidePurchaseOrder, which checks the deciding
+// user's limit. Without this a user could set them straight through the table
+// API and walk around their own authority.
+func guardDecidedStatus(tableName string, values map[string]any) error {
+	if tableName != "purchase_orders" {
+		return nil
+	}
+	status, ok := values["por_status"].(string)
+	if !ok || !slices.Contains(decidedStatuses, status) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q is set by approving or rejecting the purchase order, not by writing the column", ErrWorkflow, status)
+}
+
 // afterWrite keeps the purchase-order audit trail and the derived receipt status
 // in step with whatever a generic table write just changed. It is called from
 // Insert/Update/Delete so every surface (web UI, REST API, MCP, CSV import)
@@ -316,6 +334,9 @@ func (s *Store) Update(ctx context.Context, tableName string, id string, values 
 	table, ok := s.Table(tableName)
 	if !ok {
 		return fmt.Errorf("unknown table %q", tableName)
+	}
+	if err := guardDecidedStatus(tableName, values); err != nil {
+		return err
 	}
 
 	columns := table.InsertableColumns(values)
@@ -533,6 +554,7 @@ func (s *Store) init(ctx context.Context) error {
 			usr_login_name TEXT NOT NULL UNIQUE,
 			usr_password TEXT NOT NULL,
 			usr_role TEXT NOT NULL,
+			usr_approval_limit_minor INTEGER,
 			usr_note TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -866,29 +888,6 @@ func (s *Store) init(ctx context.Context) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (usr_id) REFERENCES users (usr_id)
 		);`,
-		`CREATE TABLE IF NOT EXISTS approval_rules (
-			apr_id INTEGER PRIMARY KEY AUTOINCREMENT,
-			apr_source_type TEXT NOT NULL,
-			apr_step INTEGER NOT NULL,
-			apr_role TEXT NOT NULL,
-			apr_min_amount_minor INTEGER NOT NULL,
-			apr_status TEXT NOT NULL,
-			apr_note TEXT,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`CREATE TABLE IF NOT EXISTS approvals (
-			apv_id INTEGER PRIMARY KEY AUTOINCREMENT,
-			apv_source_type TEXT NOT NULL,
-			apv_source_id INTEGER NOT NULL,
-			apv_step INTEGER NOT NULL,
-			apv_role TEXT NOT NULL,
-			apv_status TEXT NOT NULL,
-			apv_decided_by INTEGER,
-			apv_decided_at TEXT,
-			apv_note TEXT,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (apv_decided_by) REFERENCES users (usr_id)
-		);`,
 		`CREATE TABLE IF NOT EXISTS po_status_history (
 			psh_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			por_id INTEGER NOT NULL,
@@ -928,7 +927,7 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
-	if err := s.dropPurchaseRequisitions(ctx); err != nil {
+	if err := s.dropRetiredApprovalTables(ctx); err != nil {
 		return err
 	}
 
@@ -958,6 +957,7 @@ func (s *Store) init(ctx context.Context) error {
 		{table: "purchase_orders", column: "por_payment_status", def: "TEXT"},
 		{table: "purchase_orders", column: "por_currency", def: "TEXT"},
 		{table: "purchase_orders", column: "por_total_minor", def: "INTEGER"},
+		{table: "users", column: "usr_approval_limit_minor", def: "INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.def); err != nil {
 			return err
@@ -1003,12 +1003,13 @@ func (s *Store) renameStatusValue(ctx context.Context, oldValue, newValue string
 	return nil
 }
 
-// dropPurchaseRequisitions removes the purchase requisition tables and the
+// dropRetiredApprovalTables removes the purchase requisition and approval-rule
+// tables and the
 // purchase_orders.prq_id link from databases written before requisitions were
 // retired. purchase_orders has to be rebuilt because SQLite refuses to drop a
 // column that a foreign key clause names, and the parent table cannot be
 // dropped while that column still holds matching values.
-func (s *Store) dropPurchaseRequisitions(ctx context.Context) error {
+func (s *Store) dropRetiredApprovalTables(ctx context.Context) error {
 	linked, err := s.hasColumn(ctx, "purchase_orders", "prq_id")
 	if err != nil {
 		return err
@@ -1018,18 +1019,12 @@ func (s *Store) dropPurchaseRequisitions(ctx context.Context) error {
 			return err
 		}
 	}
-	for _, table := range []string{"prq_components", "purchase_requisitions"} {
+	// approval_rules and approvals went with the amount-routing engine: approval
+	// authority is now a per-user limit on users.usr_approval_limit_minor, and a
+	// single decision is recorded in po_status_history like any status change.
+	for _, table := range []string{"prq_components", "purchase_requisitions", "approvals", "approval_rules"} {
 		if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, quoteIdent(table))); err != nil {
 			return fmt.Errorf("drop %s: %w", table, err)
-		}
-	}
-	// Approval rules and steps that routed requisitions no longer have a source.
-	for _, statement := range []string{
-		`DELETE FROM approvals WHERE apv_source_type = 'purchase_requisition'`,
-		`DELETE FROM approval_rules WHERE apr_source_type = 'purchase_requisition'`,
-	} {
-		if _, err := s.db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("clear requisition approvals: %w", err)
 		}
 	}
 	return nil
@@ -1177,6 +1172,15 @@ func (s *Store) seedDefaults(ctx context.Context) error {
 	if err := s.seedDesignationCodes(ctx); err != nil {
 		return err
 	}
+	// An admin is the superuser, so it carries approval authority above any
+	// realistic order. Every other user starts with none until someone sets a
+	// limit; an empty limit means "may not approve".
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE users SET usr_approval_limit_minor = ?
+		WHERE usr_role = 'admin' AND usr_approval_limit_minor IS NULL`, AdminApprovalLimitMinor); err != nil {
+		return fmt.Errorf("backfill admin approval limit: %w", err)
+	}
+
 	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`)
 	var count int
 	if err := row.Scan(&count); err != nil {
@@ -1190,8 +1194,9 @@ func (s *Store) seedDefaults(ctx context.Context) error {
 		Login string
 		Pass  string
 		Role  string
+		Limit any
 	}{
-		{Login: "admin", Pass: "admin", Role: "admin"},
+		{Login: "admin", Pass: "admin", Role: "admin", Limit: AdminApprovalLimitMinor},
 		{Login: "user", Pass: "user", Role: "user"},
 		{Login: "guest", Pass: "guest", Role: "guest"},
 	}
@@ -1203,10 +1208,11 @@ func (s *Store) seedDefaults(ctx context.Context) error {
 		}
 		if _, err := s.db.ExecContext(
 			ctx,
-			`INSERT INTO users (usr_login_name, usr_password, usr_role) VALUES (?, ?, ?)`,
+			`INSERT INTO users (usr_login_name, usr_password, usr_role, usr_approval_limit_minor) VALUES (?, ?, ?, ?)`,
 			user.Login,
 			hash,
 			user.Role,
+			user.Limit,
 		); err != nil {
 			return fmt.Errorf("seed default user %s: %w", user.Login, err)
 		}

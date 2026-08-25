@@ -42,12 +42,16 @@ var (
 		"pending_revision",
 		"cancelled",
 	}
+	// AdminApprovalLimitMinor is the approval ceiling seeded for admin users, set
+	// above any realistic order so a fresh install can approve out of the box.
+	// Approval authority is per user: users.usr_approval_limit_minor is the
+	// largest order that user may approve, and an empty limit means none.
+	AdminApprovalLimitMinor int64 = 100_000_000_000
+
 	// paymentStatusOptions is the purchase order's financial tag, tracked apart
 	// from the lifecycle status so a closed order can still be unpaid.
 	paymentStatusOptions    = []string{"unpaid", "partially_paid", "paid", "refunded"}
 	quoteStatusOptions      = []string{"active", "inactive"}
-	approvalStatuses        = []string{"pending", "approved", "rejected"}
-	approvalSources         = []string{"purchase_order"}
 	salesOrderStatusOptions = []string{
 		"confirmed",
 		"preparing",
@@ -122,6 +126,7 @@ func AllTables() map[string]TableDef {
 				{Column: "usr_login_name", Label: "login_name", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true},
 				{Column: "usr_password", Label: "password", Kind: KindPassword, Editable: true},
 				{Column: "usr_role", Label: "role", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: roleOptions},
+				{Column: "usr_approval_limit_minor", Label: "approval_limit_minor", Kind: KindInteger, Editable: true, List: true, Sortable: true},
 				{Column: "usr_note", Label: "note", Kind: KindTextarea, Editable: true, List: true},
 				{Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
@@ -653,20 +658,6 @@ func AllTables() map[string]TableDef {
 			Name: "financial_obligations", Label: "Financial Obligation", PrimaryKey: "fob_id", TitleColumn: "fob_label", ReferenceCols: []string{"fob_id", "fob_label", "fob_due_date", "fob_status"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin", "user"}, DefaultSort: "fob_due_date", ImportEnabled: true,
 			Fields: []Field{
 				{Column: "fob_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "fob_type", Label: "type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationTypes}, {Column: "fob_source_type", Label: "source_type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationSources}, {Column: "fob_source_id", Label: "source_id", Kind: KindInteger, Editable: true, List: true, Sortable: true}, {Column: "fob_label", Label: "label", Kind: KindText, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_due_date", Label: "due_date", Kind: KindDate, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_amount_minor", Label: "amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "fob_currency", Label: "currency", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: currencyOptions}, {Column: "fob_status", Label: "status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: obligationStatuses}, {Column: "fob_counterparty", Label: "counterparty", Kind: KindText, Editable: true, List: true, Sortable: true}, {Column: "fob_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "usr_id", Label: "user_id", Kind: KindForeign, Editable: true, List: true, Sortable: true, RefTable: "users"}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
-			},
-		},
-		{
-			Name: "approval_rules", Label: "Approval Rule", PrimaryKey: "apr_id", TitleColumn: "apr_role", ReferenceCols: []string{"apr_id", "apr_role", "apr_min_amount_minor"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: []string{"admin"}, DefaultSort: "apr_step", ImportEnabled: true,
-			Fields: []Field{
-				{Column: "apr_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apr_source_type", Label: "source_type", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: approvalSources}, {Column: "apr_step", Label: "step", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "apr_role", Label: "approver_role", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: roleOptions}, {Column: "apr_min_amount_minor", Label: "min_amount_minor", Kind: KindInteger, Required: true, Editable: true, List: true, Sortable: true}, {Column: "apr_status", Label: "status", Kind: KindEnum, Required: true, Editable: true, List: true, Sortable: true, Options: quoteStatusOptions}, {Column: "apr_note", Label: "note", Kind: KindTextarea, Editable: true, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
-			},
-		},
-		{
-			// Approvals are an audit trail: they are created and decided through the
-			// approval endpoints, never written directly through the table API.
-			Name: "approvals", Label: "Approval", PrimaryKey: "apv_id", TitleColumn: "apv_status", ReferenceCols: []string{"apv_id", "apv_status", "apv_role"}, ReadRoles: []string{"admin", "user", "guest"}, WriteRoles: nil, DefaultSort: "apv_id",
-			Fields: []Field{
-				{Column: "apv_id", Label: "id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_source_type", Label: "source_type", Kind: KindEnum, List: true, Sortable: true, Options: approvalSources}, {Column: "apv_source_id", Label: "source_id", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_step", Label: "step", Kind: KindInteger, List: true, Sortable: true}, {Column: "apv_role", Label: "approver_role", Kind: KindEnum, List: true, Sortable: true, Options: roleOptions}, {Column: "apv_status", Label: "status", Kind: KindEnum, List: true, Sortable: true, Options: approvalStatuses}, {Column: "apv_decided_by", Label: "decided_by", Kind: KindForeign, List: true, Sortable: true, RefTable: "users"}, {Column: "apv_decided_at", Label: "decided_at", Kind: KindText, List: true, Sortable: true}, {Column: "apv_note", Label: "note", Kind: KindTextarea, List: true}, {Column: "created_at", Label: "created_at", Kind: KindText, List: true, Sortable: true},
 			},
 		},
 		{

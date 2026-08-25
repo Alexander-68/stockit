@@ -900,7 +900,7 @@ func runPurchaseOrderSubtableFlowUsesParentContext(t *testing.T) {
 		"itm_id":         finalA,
 		"por_ship_date":  "2026-03-22",
 		"por_paid_date":  "2026-03-21",
-		"por_status":     "approved",
+		"por_status":     "issued",
 		"por_note":       "Primary alpha PO",
 	})
 	porB := createRecord(t, client, token, ts.URL, "purchase_orders", map[string]any{
@@ -989,7 +989,8 @@ func runPurchaseOrderSubtableFlowUsesParentContext(t *testing.T) {
 	if !strings.Contains(poFormBody, `type="date" name="por_doc_date" value="2026-03-20"`) {
 		t.Fatalf("purchase order form should render por_doc_date as a date input: %s", poFormBody)
 	}
-	if !strings.Contains(poFormBody, `<option value="approved" selected>approved</option>`) {
+	// The order was created as issued; its line receipts then derived "received".
+	if !strings.Contains(poFormBody, `<option value="received" selected>received</option>`) {
 		t.Fatalf("purchase order form should render por_status as a selected dropdown: %s", poFormBody)
 	}
 	if !strings.Contains(poFormBody, supplierA+` | SUP-PO-A | Supplier PO A`) {
@@ -2280,7 +2281,7 @@ func TestSeedReviewDataset(t *testing.T) {
 			"itm_id":         finalItemIDs[0],
 			"por_ship_date":  "2026-03-21",
 			"por_paid_date":  "2026-03-20",
-			"por_status":     "approved",
+			"por_status":     "issued",
 			"por_note":       "Review PO A",
 		},
 		{

@@ -425,9 +425,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("DELETE /api/tables/{table}/{id}", s.cop.Handler(s.withSession(s.handleAPITableDelete)))
 	mux.Handle("POST /api/tables/{table}/import", s.cop.Handler(s.withSession(s.handleAPITableImport)))
 
-	mux.Handle("POST /api/approvals/{id}/decide", s.cop.Handler(s.withSession(s.handleAPIDecideApproval)))
 	mux.Handle("POST /api/purchase_orders/{id}/submit", s.cop.Handler(s.withSession(s.handleAPISubmitPurchaseOrder)))
 	mux.Handle("POST /api/purchase_orders/{id}/status", s.cop.Handler(s.withSession(s.handleAPISetPOStatus)))
+	mux.Handle("POST /api/purchase_orders/{id}/approve", s.cop.Handler(s.withSession(s.handleAPIDecidePurchaseOrder)))
 	mcpHandler := s.cop.Handler(s.newMCPHandler())
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("POST /mcp", mcpHandler)
@@ -824,9 +824,15 @@ func (s *Server) handleAPITableImport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
+	limit, err := s.store.ApprovalLimit(r.Context(), principal.UserID)
+	if err != nil {
+		s.writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
+		return
+	}
 	s.writeJSON(w, http.StatusOK, apiMeResponse{
-		User: principal.LoginName,
-		Role: principal.Role,
+		User:               principal.LoginName,
+		Role:               principal.Role,
+		ApprovalLimitMinor: limit,
 	})
 }
 

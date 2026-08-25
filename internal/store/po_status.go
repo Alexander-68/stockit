@@ -78,8 +78,10 @@ func insertPOHistoryTx(ctx context.Context, tx *sql.Tx, porID int64, previous, s
 }
 
 // SetPOStatus changes a purchase order's status and/or payment tag and records
-// the change with a note. Transitions are deliberately unrestricted: the history
-// is the control, not a state machine. An empty value leaves that field alone.
+// the change with a note. Transitions are deliberately unrestricted -- the
+// history is the control, not a state machine -- with one exception: approved
+// and rejected belong to DecidePurchaseOrder, which checks the signing limit.
+// An empty value leaves that field alone.
 func (s *Store) SetPOStatus(ctx context.Context, purchaseOrderID int64, status, paymentStatus, note string) (map[string]any, error) {
 	id := strconv.FormatInt(purchaseOrderID, 10)
 	status = strings.TrimSpace(status)
@@ -89,6 +91,9 @@ func (s *Store) SetPOStatus(ctx context.Context, purchaseOrderID int64, status, 
 	}
 	if status != "" && !slices.Contains(poStatusOptions, status) {
 		return nil, fmt.Errorf("%w: unknown purchase order status %q", ErrWorkflow, status)
+	}
+	if slices.Contains(decidedStatuses, status) {
+		return nil, fmt.Errorf("%w: %q is set by approving or rejecting the order, not by a status change", ErrWorkflow, status)
 	}
 	if paymentStatus != "" && !slices.Contains(paymentStatusOptions, paymentStatus) {
 		return nil, fmt.Errorf("%w: unknown payment status %q", ErrWorkflow, paymentStatus)

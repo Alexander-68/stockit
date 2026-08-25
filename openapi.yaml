@@ -8,7 +8,8 @@ info:
     The REST API and MCP tools are intentionally aligned: table catalog/schema discovery,
     record list/get/create/update/delete, and shared session authentication. MCP transport is
     documented in README.md and StokIt_Specification.md rather than OpenAPI.
-    StockIt owns one workflow: purchase order approval. Orders are priced from
+    StockIt owns one workflow: purchase order approval, gated by a per-user
+    signing limit (`users.usr_approval_limit_minor`). Orders are priced from
     their lines, routed through value-based approval rules, and converted to purchase orders
     (see the Approvals tag). Client applications still own import, calculation, forecasting,
     consistency-check, and UI workflows.
@@ -298,15 +299,46 @@ paths:
           $ref: '#/components/responses/NotFound'
 
 
-  /api/approvals/{id}/decide:
+
+  /api/purchase_orders/{id}/submit:
     post:
       tags: [Approvals]
-      summary: Approve or reject one pending approval step
+      summary: Hand a draft purchase order to someone who can approve it
       description: |
-        Steps are decided in order and only by a user whose role matches the
-        step's `apv_role`. A rejection sets the purchase order to `rejected`;
-        approving the last pending step sets it to `approved`. Both moves are
-        appended to `po_status_history`.
+        Prices the purchase order from its lines, stores the total in
+        `por_total_minor`, and moves it to `pending_approval` for a user whose
+        `usr_approval_limit_minor` covers that amount. A user whose own limit
+        already covers the order does not need this: they approve it in one
+        call. Only a draft order with at least one line can be submitted, and
+        the move is appended to `po_status_history`.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          description: Submission result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalSubmission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/purchase_orders/{id}/approve:
+    post:
+      tags: [Approvals]
+      summary: Approve or reject a purchase order against your own signing limit
+      description: |
+        Reprices the order from its lines, then checks the amount against the
+        calling user's `users.usr_approval_limit_minor`. A user whose limit is
+        empty, zero or below the order total gets 403. Works from `draft` (a
+        one-step approval by someone whose limit already covers the order) and
+        from `pending_approval`. This is the only way to set `approved` or
+        `rejected`: both are refused through the table API and through
+        `/status`, so the signing limit cannot be walked around. The decision is
+        appended to `po_status_history` with the deciding user and the note.
       parameters:
         - $ref: '#/components/parameters/RecordID'
       requestBody:
@@ -329,33 +361,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApprovalDecision'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /api/purchase_orders/{id}/submit:
-    post:
-      tags: [Approvals]
-      summary: Submit a draft purchase order for approval
-      description: |
-        Prices the purchase order from its lines, stores the total in
-        `por_total_minor`, and creates one pending approval step per active
-        approval rule with `apr_source_type = purchase_order` whose
-        `apr_min_amount_minor` the total reaches. An order that matches no rule
-        is approved outright. Only a draft order with at least one line can be
-        submitted; the status moves to `pending_approval`, then `approved` or
-        `rejected`. Every one of those moves is appended to `po_status_history`.
-      parameters:
-        - $ref: '#/components/parameters/RecordID'
-      responses:
-        '200':
-          description: Submission result
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApprovalSubmission'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -445,8 +450,6 @@ components:
           - designation_codes
           - financial_obligations
           - bank_transactions
-          - approval_rules
-          - approvals
           - po_status_history
     RecordID:
       name: id
@@ -567,45 +570,35 @@ components:
           additionalProperties: true
     ApprovalSubmission:
       type: object
-      required: [source_type, source_id, status, total_minor, approvals]
+      required: [purchase_order_id, status, total_minor]
       properties:
-        source_type:
-          type: string
-          enum: [purchase_order]
-        source_id:
+        purchase_order_id:
           type: integer
         status:
           type: string
-          enum: [pending_approval, approved]
+          enum: [pending_approval]
         total_minor:
           type: integer
           description: Purchase order value in integer minor units, priced from its lines.
         currency:
           type: string
-        approvals:
-          type: array
-          description: Pending approval steps, in decision order.
-          items:
-            type: object
-            additionalProperties: true
     ApprovalDecision:
       type: object
-      required: [approval, source_type, source_id, status, remaining_approvals]
+      required: [purchase_order_id, status, total_minor, approval_limit_minor]
       properties:
-        approval:
-          type: object
-          additionalProperties: true
-        source_type:
-          type: string
-          enum: [purchase_order]
-        source_id:
+        purchase_order_id:
           type: integer
         status:
           type: string
-          description: Lifecycle status of the purchase order after the decision.
-          enum: [pending_approval, approved, rejected]
-        remaining_approvals:
+          enum: [approved, rejected]
+        total_minor:
           type: integer
+          description: Purchase order value in integer minor units, repriced at decision time.
+        currency:
+          type: string
+        approval_limit_minor:
+          type: integer
+          description: The deciding user's own ceiling, echoed back so a refusal can be explained.
     TableImportResponse:
       type: object
       additionalProperties: false

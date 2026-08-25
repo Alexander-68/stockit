@@ -44,32 +44,40 @@ func TestPurchaseOrderApprovalAndStatusHistoryAPI(t *testing.T) {
 	client := newServerHTTPClient(t, ts.server)
 	admin := apiLogin(t, client, ts.URL, "admin", "admin").Token
 
-	createRecord(t, client, admin, ts.URL, "approval_rules", map[string]any{
-		"apr_source_type": "purchase_order", "apr_step": 1, "apr_role": "admin",
-		"apr_min_amount_minor": 10_000, "apr_status": "active",
-	})
 	purchaseOrder := seedApprovalFixture(t, client, admin, ts.URL, "RV-PO-WF", 1000)
 
-	submitResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/submit", admin, nil)
+	// The buyer's limit falls short, so the order is handed on instead.
+	buyer := createRecord(t, client, admin, ts.URL, "users", map[string]any{
+		"usr_login_name": "limited", "usr_password": "limited-pass", "usr_role": "user",
+		"usr_approval_limit_minor": 10_000,
+	})
+	_ = buyer
+	limited := apiLogin(t, client, ts.URL, "limited", "limited-pass").Token
+	overLimit := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/approve", limited, map[string]any{"decision": "approved"})
+	_ = overLimit.Body.Close()
+	if overLimit.StatusCode != http.StatusForbidden {
+		t.Fatalf("approve over limit = %d, want 403", overLimit.StatusCode)
+	}
+
+	submitResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/submit", limited, nil)
 	if submitResp.StatusCode != http.StatusOK {
 		t.Fatalf("submit status = %d, want 200", submitResp.StatusCode)
 	}
 	var submission struct {
-		Status     string           `json:"status"`
-		TotalMinor int64            `json:"total_minor"`
-		Approvals  []map[string]any `json:"approvals"`
+		Status     string `json:"status"`
+		TotalMinor int64  `json:"total_minor"`
 	}
 	decodeJSON(t, submitResp.Body, &submission)
-	if submission.Status != "pending_approval" || submission.TotalMinor != 100_000 || len(submission.Approvals) != 1 {
+	if submission.Status != "pending_approval" || submission.TotalMinor != 100_000 {
 		t.Fatalf("unexpected submission: %+v", submission)
 	}
 
-	approvalID := jsonNumberString(t, submission.Approvals[0]["apv_id"])
-	decideResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/approvals/"+approvalID+"/decide", admin, map[string]any{
+	// admin carries the seeded ceiling, so it can decide anything.
+	decideResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/approve", admin, map[string]any{
 		"decision": "approved", "note": "budget confirmed",
 	})
 	if decideResp.StatusCode != http.StatusOK {
-		t.Fatalf("decide status = %d, want 200", decideResp.StatusCode)
+		t.Fatalf("approve status = %d, want 200", decideResp.StatusCode)
 	}
 	_ = decideResp.Body.Close()
 
@@ -119,37 +127,54 @@ func TestPurchaseOrderApprovalAndStatusHistoryAPI(t *testing.T) {
 	}
 }
 
-func TestPurchaseOrderBelowThresholdNeedsNoApproval(t *testing.T) {
+// TestApprovalWithinOwnLimitIsOneStep covers the common small-company path: the
+// buyer's own signing limit covers the order, so approval is a single call.
+func TestApprovalWithinOwnLimitIsOneStep(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
 	client := newServerHTTPClient(t, ts.server)
 	admin := apiLogin(t, client, ts.URL, "admin", "admin").Token
 
-	createRecord(t, client, admin, ts.URL, "approval_rules", map[string]any{
-		"apr_source_type": "purchase_order", "apr_step": 1, "apr_role": "admin",
-		"apr_min_amount_minor": 1_000_000, "apr_status": "active",
+	createRecord(t, client, admin, ts.URL, "users", map[string]any{
+		"usr_login_name": "buyer", "usr_password": "buyer-pass", "usr_role": "user",
+		"usr_approval_limit_minor": 100_000,
 	})
-	purchaseOrder := seedApprovalFixture(t, client, admin, ts.URL, "RV-PO-SMALL", 12.5)
+	buyer := apiLogin(t, client, ts.URL, "buyer", "buyer-pass").Token
 
-	submitResp := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/submit", admin, nil)
-	if submitResp.StatusCode != http.StatusOK {
-		t.Fatalf("submit status = %d, want 200", submitResp.StatusCode)
+	me := doAPI(t, client, http.MethodGet, ts.URL+"/api/me", buyer, nil)
+	var principal struct {
+		ApprovalLimitMinor int64 `json:"approval_limit_minor"`
 	}
-	var submission struct {
-		Status     string           `json:"status"`
-		TotalMinor int64            `json:"total_minor"`
-		Approvals  []map[string]any `json:"approvals"`
-	}
-	decodeJSON(t, submitResp.Body, &submission)
-	// No rule matches this amount, so StockIt approves the order outright.
-	if submission.Status != "approved" || submission.TotalMinor != 1250 || len(submission.Approvals) != 0 {
-		t.Fatalf("unexpected submission: %+v", submission)
+	decodeJSON(t, me.Body, &principal)
+	if principal.ApprovalLimitMinor != 100_000 {
+		t.Fatalf("/api/me limit = %d, want 100000", principal.ApprovalLimitMinor)
 	}
 
-	resubmit := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/submit", admin, nil)
-	_ = resubmit.Body.Close()
-	if resubmit.StatusCode != http.StatusBadRequest {
-		t.Fatalf("resubmit status = %d, want 400", resubmit.StatusCode)
+	purchaseOrder := seedApprovalFixture(t, client, buyer, ts.URL, "RV-PO-SMALL", 12.5)
+
+	// Straight from draft to approved, no submit step in between.
+	approve := doAPI(t, client, http.MethodPost, ts.URL+"/api/purchase_orders/"+purchaseOrder+"/approve", buyer, map[string]any{
+		"decision": "approved", "note": "within my limit",
+	})
+	if approve.StatusCode != http.StatusOK {
+		t.Fatalf("approve status = %d, want 200", approve.StatusCode)
+	}
+	var decision struct {
+		Status     string `json:"status"`
+		TotalMinor int64  `json:"total_minor"`
+	}
+	decodeJSON(t, approve.Body, &decision)
+	if decision.Status != "approved" || decision.TotalMinor != 1250 {
+		t.Fatalf("unexpected decision: %+v", decision)
+	}
+
+	// Writing the decided status directly must stay refused.
+	sneak := doAPI(t, client, http.MethodPut, ts.URL+"/api/tables/purchase_orders/"+purchaseOrder, buyer, map[string]any{
+		"por_doc_number": "RV-PO-SMALL", "por_status": "approved",
+	})
+	_ = sneak.Body.Close()
+	if sneak.StatusCode != http.StatusBadRequest {
+		t.Fatalf("direct status write = %d, want 400", sneak.StatusCode)
 	}
 }

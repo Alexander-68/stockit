@@ -30,8 +30,6 @@ var tableMethods = map[string]string{
 	"quotes":                "GET",
 	"quote_components":      "GET",
 	"purchase_orders":       "GET POST PUT DELETE",
-	"approvals":             "GET",
-	"approval_rules":        "GET",
 	"po_status_history":     "GET",
 	"po_components":         "GET POST PUT DELETE",
 	"financial_obligations": "GET POST PUT DELETE",
@@ -51,14 +49,17 @@ type session struct {
 	token string
 	user  string
 	role  string
+	// approvalLimitMinor is the largest purchase order this user may approve, in
+	// integer minor units; it decides whether the UI offers Approve or Submit.
+	approvalLimitMinor int64
 }
 
 // workflowActions whitelists the StockIt approval endpoints this app may call.
 // Each entry is "<collection>/<action>"; StockIt still enforces role and state.
 var workflowActions = map[string]bool{
-	"purchase_orders/submit": true,
-	"purchase_orders/status": true,
-	"approvals/decide":       true,
+	"purchase_orders/submit":  true,
+	"purchase_orders/status":  true,
+	"purchase_orders/approve": true,
 }
 
 type loginRequest struct {
@@ -70,6 +71,10 @@ type stockitLoginResponse struct {
 	Token string `json:"token"`
 	User  string `json:"user"`
 	Role  string `json:"role"`
+}
+
+type stockitMeResponse struct {
+	ApprovalLimitMinor int64 `json:"approval_limit_minor"`
 }
 
 func main() {
@@ -104,7 +109,6 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /api/me", a.handleMe)
 	mux.HandleFunc("/api/tables/", a.handleProxy)
 	mux.HandleFunc("POST /api/purchase_orders/{id}/{action}", a.handleWorkflowProxy)
-	mux.HandleFunc("POST /api/approvals/{id}/{action}", a.handleWorkflowProxy)
 	return mux
 }
 
@@ -158,11 +162,12 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create app session"})
 		return
 	}
+	limit := a.approvalLimit(r, login.Token)
 	a.mu.Lock()
-	a.sessions[appToken] = session{token: login.Token, user: login.User, role: login.Role}
+	a.sessions[appToken] = session{token: login.Token, user: login.User, role: login.Role, approvalLimitMinor: limit}
 	a.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: appToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.secureCookies || r.TLS != nil})
-	writeJSON(w, http.StatusOK, map[string]string{"user": login.User, "role": login.Role})
+	writeJSON(w, http.StatusOK, map[string]any{"user": login.User, "role": login.Role, "approval_limit_minor": limit})
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +195,30 @@ func (a *app) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"user": current.user, "role": current.role})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": current.user, "role": current.role, "approval_limit_minor": current.approvalLimitMinor,
+	})
+}
+
+// approvalLimit reads the signing authority StockIt holds for the user who just
+// logged in. A failure is not fatal: a zero limit only means the UI offers
+// "Submit for approval" instead of "Approve", and StockIt checks it again.
+func (a *app) approvalLimit(r *http.Request, token string) int64 {
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.stockitURL+"/api/me", nil)
+	if err != nil {
+		return 0
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := a.client.Do(request)
+	if err != nil {
+		return 0
+	}
+	defer response.Body.Close()
+	var me stockitMeResponse
+	if err := json.UnmarshalRead(response.Body, &me); err != nil {
+		return 0
+	}
+	return me.ApprovalLimitMinor
 }
 
 // handleProxy forwards whitelisted /api/tables requests to StockIt with the
