@@ -107,6 +107,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /login", a.handleLogin)
 	mux.HandleFunc("POST /logout", a.handleLogout)
 	mux.HandleFunc("GET /api/me", a.handleMe)
+	mux.HandleFunc("GET /api/users/names", a.handleUserNames)
 	mux.HandleFunc("/api/tables/", a.handleProxy)
 	mux.HandleFunc("POST /api/purchase_orders/{id}/{action}", a.handleWorkflowProxy)
 	return mux
@@ -219,6 +220,17 @@ func (a *app) approvalLimit(r *http.Request, token string) int64 {
 		return 0
 	}
 	return me.ApprovalLimitMinor
+}
+
+// handleUserNames forwards StockIt's id-to-login-name map so the app can label
+// who changed a status instead of showing a raw user id.
+func (a *app) handleUserNames(w http.ResponseWriter, r *http.Request) {
+	appToken, current, ok := a.sessionFromRequest(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
+		return
+	}
+	a.forward(w, r, appToken, current, a.stockitURL+"/api/users/names")
 }
 
 // handleProxy forwards whitelisted /api/tables requests to StockIt with the

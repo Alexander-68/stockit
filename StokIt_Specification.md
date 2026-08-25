@@ -184,6 +184,7 @@ Notes:
 * In web UI column names are shown "human friendly" without leading prefix: address\_en instead of cus\_address\_en.
 * for status fields: Draft, Under Review, Active, Inactive, Hold, Phase-Out, Obsolete.
 * root `openapi.yaml` is the maintained REST API contract.
+* `GET /api/users/names` returns only user ids and login names, so external apps can label who touched a record without opening the admin-only users table. It leaks no credential, role or approval limit.
 * list endpoints filter server-side: `filter.<column>` (equality), `from.<column>` / `to.<column>` (inclusive range), `q` (substring across the table's text columns). Unknown columns are rejected.
 * purchase order approval is the one workflow StockIt owns: `POST /api/purchase_orders/{id}/submit`, `POST /api/purchase_orders/{id}/approve`, `POST /api/purchase_orders/{id}/status`, each mirrored by an MCP tool. Order totals are integer minor units, computed as `round(sum(qty * price) * 100)`.
 * approval authority is a per-user signing limit, `users.usr_approval_limit_minor` — the largest order that user may approve. Empty means none; the seeded admin carries a ceiling above any realistic order. Approval is single-step: cover the total and you approve from draft in one call, otherwise you submit and someone with a bigger limit decides. Self-approval within your own limit is allowed.

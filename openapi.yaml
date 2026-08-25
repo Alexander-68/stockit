@@ -97,6 +97,36 @@ paths:
                 $ref: '#/components/schemas/MeResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/users/names:
+    get:
+      tags: [Metadata]
+      summary: List user ids and login names
+      description: |
+        The id-to-login-name map external apps need to label who created or
+        changed a record. Deliberately not the users table: it carries no
+        credentials, role or approval limit, so any authenticated principal may
+        read it, including a `guest` who cannot read `users` itself.
+      responses:
+        '200':
+          description: User names
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      required: [usr_id, usr_login_name]
+                      properties:
+                        usr_id:
+                          type: integer
+                        usr_login_name:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/tables:
     get:
       tags: [Metadata]

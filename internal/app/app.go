@@ -416,6 +416,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/auth/login", s.cop.Handler(s.limitLogin(s.handleAPIAuthLogin)))
 	mux.Handle("POST /api/auth/logout", s.cop.Handler(s.withSession(s.handleAPIAuthLogout)))
 	mux.Handle("GET /api/me", s.withSession(s.handleAPIMe))
+	mux.Handle("GET /api/users/names", s.withSession(s.handleAPIUserNames))
 	mux.Handle("GET /api/tables", s.withSession(s.handleAPITableCatalog))
 	mux.Handle("GET /api/tables/{table}/schema", s.withSession(s.handleAPITableSchema))
 	mux.Handle("GET /api/tables/{table}", s.withSession(s.handleAPITableList))
@@ -834,6 +835,18 @@ func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
 		Role:               principal.Role,
 		ApprovalLimitMinor: limit,
 	})
+}
+
+// handleAPIUserNames answers the id-to-login-name map that external apps need to
+// label the user who touched a record. It is deliberately not the users table:
+// no credentials, role or approval limit, so any signed-in principal may read it.
+func (s *Server) handleAPIUserNames(w http.ResponseWriter, r *http.Request) {
+	names, err := s.store.UserNames(r.Context())
+	if err != nil {
+		s.writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, apiUserNamesResponse{Users: names})
 }
 
 func (s *Server) handleAPITableCatalog(w http.ResponseWriter, r *http.Request) {

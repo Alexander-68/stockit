@@ -40,6 +40,10 @@ func newFakeStockIt(t *testing.T) *httptest.Server {
 			writeJSON(w, http.StatusOK, stockitLoginResponse{Token: "stockit-token", User: "user"})
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/users/names" {
+			writeJSON(w, http.StatusOK, map[string]any{"users": []map[string]any{{"usr_id": 1, "usr_login_name": "alex"}}})
+			return
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/api/me" {
 			writeJSON(w, http.StatusOK, map[string]any{"user": "user", "role": "user", "approval_limit_minor": 250000})
 			return
@@ -258,5 +262,34 @@ func TestLoginCarriesApprovalLimit(t *testing.T) {
 		if !strings.Contains(string(body), `"approval_limit_minor":250000`) {
 			t.Fatalf("%s did not carry the approval limit: %s", path, body)
 		}
+	}
+}
+
+// TestUserNamesProxy covers the id-to-name lookup the status history uses to
+// show who changed a status instead of a raw user id.
+func TestUserNamesProxy(t *testing.T) {
+	stockit := newFakeStockIt(t)
+	defer stockit.Close()
+	appServer := httptest.NewServer(newApp(stockit.URL, stockit.Client()).handler())
+	defer appServer.Close()
+	client := loggedInClient(t, appServer)
+
+	response, err := client.Get(appServer.URL + "/api/users/names")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"usr_login_name":"alex"`) {
+		t.Fatalf("user names proxy returned %d: %s", response.StatusCode, body)
+	}
+
+	anonymous, err := http.Get(appServer.URL + "/api/users/names")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = anonymous.Body.Close()
+	if anonymous.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous user names returned %d, want 401", anonymous.StatusCode)
 	}
 }

@@ -52,7 +52,8 @@ StockIt is a secure system of record for external web apps and smart tools throu
 - Login attempt throttling keyed to the direct client socket address with bounded in-memory tracking.
 - REST API additions for:
   - JSON login/logout
-  - current principal lookup
+  - current principal lookup, including the caller's purchase approval limit
+  - user id/login-name lookup (`GET /api/users/names`) for "changed by" labels, readable by any authenticated principal and carrying no credentials, role or approval limit
   - table catalog discovery
   - table schema discovery
   - validated generic record list/get/create/update/delete
@@ -170,6 +171,7 @@ Current REST endpoints:
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/me`
+- `GET /api/users/names`
 - `GET /api/tables`
 - `GET /api/tables/{table}/schema`
 - `GET /api/tables/{table}` (supports `?parent_id=<value>` and optional `?parent_field=<column>` for subtables; `?filter.<column>=`, `?from.<column>=`, `?to.<column>=`, `?q=`)

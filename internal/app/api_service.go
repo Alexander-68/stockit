@@ -103,6 +103,10 @@ type apiMeResponse struct {
 	ApprovalLimitMinor int64 `json:"approval_limit_minor"`
 }
 
+type apiUserNamesResponse struct {
+	Users []store.UserName `json:"users"`
+}
+
 type apiTableListEnvelope struct {
 	Tables []apiTableSummary `json:"tables"`
 }

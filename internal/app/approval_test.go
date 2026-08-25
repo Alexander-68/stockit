@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json/v2"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -176,5 +177,39 @@ func TestApprovalWithinOwnLimitIsOneStep(t *testing.T) {
 	_ = sneak.Body.Close()
 	if sneak.StatusCode != http.StatusBadRequest {
 		t.Fatalf("direct status write = %d, want 400", sneak.StatusCode)
+	}
+}
+
+// TestUserNamesAreReadableByAnyPrincipal covers the id-to-name map external apps
+// use to label who changed a status. It must not leak anything else, and it must
+// work for a non-admin, who cannot read the users table itself.
+func TestUserNamesAreReadableByAnyPrincipal(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	client := newServerHTTPClient(t, ts.server)
+	guest := apiLogin(t, client, ts.URL, "guest", "guest").Token
+
+	blocked := doAPI(t, client, http.MethodGet, ts.URL+"/api/tables/users", guest, nil)
+	_ = blocked.Body.Close()
+	if blocked.StatusCode != http.StatusForbidden {
+		t.Fatalf("users table for guest = %d, want 403", blocked.StatusCode)
+	}
+
+	response := doAPI(t, client, http.MethodGet, ts.URL+"/api/users/names", guest, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("user names status = %d, want 200", response.StatusCode)
+	}
+	body := readBody(t, response.Body)
+	for _, want := range []string{`"usr_login_name":"admin"`, `"usr_login_name":"guest"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("user names missing %s: %s", want, body)
+		}
+	}
+	// Nothing beyond the id and the name may travel with it.
+	for _, leak := range []string{"usr_password", "usr_role", "usr_approval_limit_minor"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("user names leaked %s: %s", leak, body)
+		}
 	}
 }

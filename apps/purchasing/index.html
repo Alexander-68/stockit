@@ -214,7 +214,17 @@
 
     let suppliers = [], items = [], orders = [], currentPO = null, currentSupplier = null;
     let lines = [], schedule = [], priceList = {}, orderTotals = {};
-    let poHistory = [], approvalLimitMinor = 0;
+    let poHistory = [], approvalLimitMinor = 0, userNames = {};
+
+    // StockIt records who changed a status as a user id; this maps it to the
+    // login name for display. An unknown id falls back to "#id".
+    const userName = id => (id == null || id === '') ? '' : (userNames[id] || `#${id}`);
+    // Status values are snake_case on the wire; print them as a sentence.
+    const statusLabel = status => String(status || '').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+
+    // whoDid returns the user who most recently moved the order into a status,
+    // reading the history newest-first.
+    const whoDid = status => userName(poHistory.find(entry => entry.psh_status === status)?.usr_id);
     let sort = { key: 'por_doc_date', desc: true };
 
     async function api(method, path, body) {
@@ -585,7 +595,7 @@
           <td>${escape(entry.psh_previous_status)}</td>
           <td>${escape(entry.psh_status)}</td>
           <td>${escape(entry.psh_payment_status)}</td>
-          <td>${escape(entry.usr_id)}</td>
+          <td>${escape(userName(entry.usr_id))}</td>
           <td>${escape(entry.psh_note)}</td>
         </tr>`).join('')
       }</tbody></table>` : '<p class="muted">No status changes recorded yet.</p>';
@@ -752,12 +762,22 @@
     }
 
     // --- print ---
+    // Issued by: whoever moved the order to issued, falling back to whoever
+    // drafted it, because a small order is often never formally issued. The
+    // printed line is dropped when the status line already says the same thing.
+    function issuedBy() {
+      return whoDid('issued') || userName(currentPO?.usr_id) || 'unknown';
+    }
+
     $('#print').addEventListener('click', () => {
       const po = currentPO, supplier = suppliers.find(s => s.sup_id === po.sup_id);
       const totals = lineTotals(lines);
       $('#print-view').innerHTML = `
         <h1>Purchase Order ${escape(po.por_doc_number)}</h1>
-        <p class="muted">Status: ${escape(po.por_status)} &middot; Payment: ${escape(po.por_payment_status || 'unpaid')}</p>
+        <p class="muted">Status: ${escape(statusLabel(po.por_status))}${
+          whoDid(po.por_status) ? ` by ${escape(whoDid(po.por_status))}` : ''
+        } &middot; Payment: ${escape(statusLabel(po.por_payment_status || 'unpaid'))}</p>
+        ${po.por_status === 'issued' && whoDid('issued') === issuedBy() ? '' : `<p class="muted">Issued by ${escape(issuedBy())}</p>`}
         <div class="print-meta">
           <div><h3>Supplier</h3>${supplier ? `${escape(supplier.sup_name_en || '')}<br>${escape(supplier.sup_address_en || '')}<br>${escape(supplier.sup_contact_name || '')} ${escape(supplier.sup_contact_phone || '')}<br>${escape(supplier.sup_contact_email || '')}` : '<span class="muted">No supplier selected</span>'}</div>
           <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '-')}<br>Ship date: ${escape(po.por_ship_date || '-')}<br>Paid date: ${escape(po.por_paid_date || '-')}</div>
@@ -831,6 +851,10 @@
       for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');
       for (const select of document.querySelectorAll('.obligation-status-select')) select.innerHTML = options(OBLIGATION_STATUSES, 'planned');
       $('#filter-payment').innerHTML = '<option value="">All payment tags</option>' + options(PAYMENT_STATUSES);
+      // Advisory: without the name map the history falls back to showing "#id".
+      try {
+        userNames = Object.fromEntries((await api('GET', '/api/users/names')).users.map(u => [u.usr_id, u.usr_login_name]));
+      } catch { userNames = {}; }
       await showList();
     }
     (async () => {

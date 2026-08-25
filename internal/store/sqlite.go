@@ -397,6 +397,34 @@ func (s *Store) Delete(ctx context.Context, tableName string, id string) error {
 	return s.syncPOReceiptStatus(ctx, parentPO)
 }
 
+// UserName pairs a user id with the login name shown next to the records that
+// user touched.
+type UserName struct {
+	ID        int64  `json:"usr_id"`
+	LoginName string `json:"usr_login_name"`
+}
+
+// UserNames lists every user's id and login name. It carries no credentials,
+// role or approval limit, so it can be read by any authenticated principal to
+// render "changed by" labels without opening the admin-only users table.
+func (s *Store) UserNames(ctx context.Context) ([]UserName, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT usr_id, usr_login_name FROM users ORDER BY usr_login_name`)
+	if err != nil {
+		return nil, fmt.Errorf("list user names: %w", err)
+	}
+	defer rows.Close()
+
+	names := []UserName{}
+	for rows.Next() {
+		var name UserName
+		if err := rows.Scan(&name.ID, &name.LoginName); err != nil {
+			return nil, fmt.Errorf("scan user name: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE usr_role = 'admin'`)
 	var count int
