@@ -88,7 +88,7 @@
 
   <main id="edit-view" class="hidden">
     <section>
-      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="copy-po" class="secondary hidden" type="button">Copy PO</button><button id="print" class="secondary hidden" type="button">Print</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
+      <div class="section-head"><h2 id="edit-title">New purchase order</h2><div class="controls"><button id="back" class="secondary" type="button">Back to list</button><button id="duplicate-po" class="secondary hidden" type="button">Duplicate</button><button id="print" class="secondary hidden" type="button">Print</button><button id="delete-po" class="danger hidden" type="button">Delete PO</button></div></div>
       <form id="po-form">
         <div class="grid">
           <label>Doc number<input name="por_doc_number" required></label>
@@ -99,7 +99,7 @@
           <label>Status<select name="por_status" id="status-select"></select></label>
         </div>
         <label>Note<textarea name="por_note" rows="2"></textarea></label>
-        <div class="controls" style="margin-top:.75rem"><button>Save order</button><span id="edit-error" class="error" style="margin:0"></span></div>
+        <div class="controls" style="margin-top:.75rem"><button>Save order</button><span id="duplicate-note" class="muted" style="margin:0"></span><span id="edit-error" class="error" style="margin:0"></span></div>
       </form>
     </section>
 
@@ -382,7 +382,7 @@
     // --- purchase order editor ---
     async function openPO(id) {
       currentPO = null; lines = []; schedule = []; priceList = {};
-      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning']) $(id).textContent = '';
+      for (const id of ['#edit-error', '#lines-error', '#schedule-error', '#quote-hint', '#price-warning', '#duplicate-note']) $(id).textContent = '';
       if (id != null) {
         try {
           const record = await api('GET', `/api/tables/purchase_orders/${id}`);
@@ -399,7 +399,7 @@
       $('#status-select').innerHTML = options(PO_STATUSES, po.por_status || 'draft');
       form.por_note.value = po.por_note || '';
       $('#edit-title').textContent = currentPO ? `Purchase order ${currentPO.por_doc_number}` : 'New purchase order';
-      for (const id of ['#delete-po', '#print', '#copy-po', '#lines-section', '#schedule-section']) $(id).classList.toggle('hidden', !currentPO);
+      for (const id of ['#delete-po', '#print', '#duplicate-po', '#lines-section', '#schedule-section']) $(id).classList.toggle('hidden', !currentPO);
       show('edit');
       if (currentPO) await Promise.all([loadLines(), loadSchedule(), loadPriceList(currentPO.sup_id)]);
     }
@@ -600,15 +600,17 @@
         }
       } catch (error) { $('#edit-error').textContent = error.message; }
     });
-    $('#copy-po').addEventListener('click', async () => {
+    // Duplicate copies what a re-order needs: supplier, note and every line's item,
+    // qty, price and currency. Receipts, ship/paid dates and the payment schedule
+    // belong to the original order and are deliberately left behind.
+    $('#duplicate-po').addEventListener('click', async () => {
       if (!currentPO) return;
-      const docNumber = prompt('Document number for the copy', `${currentPO.por_doc_number}-COPY`);
-      if (!docNumber) return;
+      const source = currentPO.por_doc_number;
       $('#edit-error').textContent = '';
       try {
         const record = await api('POST', '/api/tables/purchase_orders', {
-          por_doc_number: docNumber, sup_id: currentPO.sup_id, por_doc_date: isoDate(new Date()),
-          por_status: 'draft', por_note: currentPO.por_note || null,
+          por_doc_number: `${source}-COPY`, sup_id: currentPO.sup_id,
+          por_doc_date: isoDate(new Date()), por_status: 'draft', por_note: currentPO.por_note || null,
         });
         for (const line of lines) {
           await api('POST', '/api/tables/po_components', {
@@ -617,6 +619,10 @@
           });
         }
         await openPO(record.row.por_id);
+        const field = $('#po-form').por_doc_number;
+        field.focus();
+        field.select();
+        $('#duplicate-note').textContent = `Draft copy of ${source}: lines copied, receipts and payment schedule not. Set the document number and save.`;
       } catch (error) { $('#edit-error').textContent = error.message; }
     });
     $('#delete-po').addEventListener('click', async () => {

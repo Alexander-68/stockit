@@ -25,7 +25,7 @@ Version: `1.0.260825` (shown under the app title).
 - Browse POs with a filter bar: doc-date range (defaults to the last 12 months), supplier, status, and a doc-number/note search. All four filter server-side through StockIt's list filters, so the browser only holds the window it asked for. Click a column title to sort, click again to reverse.
 - Order total per PO is shown in the list, summed per currency from that order's lines.
 - Create/edit PO headers (`purchase_orders`): doc number, supplier, doc/ship/paid dates, status, note. New POs start as `draft`.
-- Copy PO: duplicates the header and all lines into a new draft order under a document number you choose.
+- Duplicate: creates a new draft order from the open one, for re-ordering the same basket. It copies the supplier, the note and every line (item, qty, unit price, currency); it does not copy receipts, ship/paid dates or the payment schedule, which belong to the original order. The copy is created in StockIt immediately as a `draft` with the document number `<original>-COPY`, then opens with that number selected so you can rename it and save. Delete it if you created it by mistake.
 - Goods receipt: each order line carries received qty and received date, with outstanding qty shown per line and a received/ordered unit count for the order. "Receive all" fills a line from its ordered qty.
 - Supplier management: full CRUD over `suppliers`, plus each supplier's purchase history and total ordered value per currency.
 - Supplier price list: active `quotes` for the PO's supplier fill a new line's price and currency from the newest quote for that item, showing MOQ and lead time. A price more than 0.5% away from the quoted price raises a visible warning; it never blocks the order.
