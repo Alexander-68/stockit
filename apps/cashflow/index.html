@@ -13,7 +13,11 @@
     header { display: flex; justify-content: space-between; align-items: center; } h1, h2 { margin: 0 0 .75rem; } h1 { font-size: 1.5rem; margin: 0; } h2 { font-size: 1.1rem; }
     .section-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; } .section-head h2 { margin: 0; } .section-head button { margin-top: 0; }
     #dates { padding: 1rem 1.25rem; } .date-fields { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .5rem; } .date-fields label { flex: 1 1 12rem; margin-top: 0; }
-    label { display: block; font-weight: 600; margin-top: .75rem; } input { box-sizing: border-box; width: 100%; margin-top: .25rem; padding: .65rem; border: 1px solid #9da9bc; border-radius: .4rem; }
+    label { display: block; font-weight: 600; margin-top: .75rem; } input, select { box-sizing: border-box; width: 100%; margin-top: .25rem; padding: .65rem; border: 1px solid #9da9bc; border-radius: .4rem; background: #fff; font: inherit; }
+    /* One height for every field in a form grid, so selects line up with inputs. */
+    .grid input, .grid select, .date-fields input { height: 2.85rem; }
+    /* Designation is prose, not an amount, so it reads left in the numeric table. */
+    #forecast th:nth-child(3), #forecast td:nth-child(3) { text-align: left; }
     button { border: 1px solid #155eef; border-radius: .4rem; padding: .65rem .9rem; background: transparent; color: #155eef; cursor: pointer; font-weight: 700; margin-top: 1rem; } button.secondary { border-color: #475467; color: #475467; margin-top: 0; } .controls button + button { margin-left: 1rem; }
     table { width: 100%; border-collapse: collapse; } th, td { padding: .6rem; border-bottom: 1px solid #e4e9f2; text-align: right; } th:first-child, td:first-child { text-align: left; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; } .error { color: #b42318; } .error:empty, .muted:empty { display: none; }
@@ -31,7 +35,7 @@
   </style>
 </head>
 <body class="stockit-app-shell">
-  <header><div><h1>Cashflow</h1><p class="version" id="version"></p></div><div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div></header>
+  <header><div><h1>Cashflow</h1><p class="version" id="version"></p></div><div id="identity" class="hidden"><span id="user"></span> <button id="toggle-recurring" class="secondary">Add recurring</button> <button id="logout" class="secondary">Log out</button></div></header>
   <div id="login-shell">
     <form id="login" class="stockit-login-card">
       <div class="login-head">
@@ -53,7 +57,7 @@
       <p id="print-dates" class="print-only"></p>
     </section>
     <section><h2>Current bank balances</h2><p id="balance-note" class="muted">Amounts are StockIt integer minor units.</p><div id="accounts"></div></section>
-    <section id="recurring">
+    <section id="recurring" class="hidden">
       <div class="section-head"><h2>Add recurring payment</h2><span id="recurring-result" class="muted"></span></div>
       <p class="muted">Rent, payroll or any other repeating commitment. Each installment is written as its own planned obligation, so a later change is an ordinary edit of the rows it affects.</p>
       <form id="recurring-form">
@@ -63,13 +67,12 @@
           <label>Direction<select name="type"><option value="payable">payable</option><option value="receivable">receivable</option></select></label>
           <label>Source<select name="source_type"><option value="other">other</option><option value="payroll">payroll</option><option value="invoice">invoice</option><option value="purchase_order">purchase_order</option><option value="sales_order">sales_order</option></select></label>
           <label>Amount (minor)<input name="amount_minor" type="number" step="1" min="1" required></label>
-          <label>Currency<input name="currency" list="currency-options" required></label>
+          <label>Currency<select name="currency" id="currency-select"></select></label>
           <label>Designation<select name="designation_code" id="designation-select"><option value="">&mdash;</option></select></label>
           <label>First due date<input name="first_due_date" type="date" required></label>
           <label>Period<select name="period"><option value="monthly">monthly</option><option value="weekly">weekly</option><option value="quarterly">quarterly</option><option value="yearly">yearly</option></select></label>
           <label>Installments<input name="count" type="number" step="1" min="1" max="60" value="12" required></label>
         </div>
-        <datalist id="currency-options"></datalist>
         <label>Note<input name="note"></label>
         <div class="controls"><button id="recurring-submit">Create installments</button><span id="recurring-error" class="error" style="margin:0"></span></div>
       </form>
@@ -78,6 +81,7 @@
   </main>
   <script>
     const VERSION = '1.0.260826';
+    const CURRENCIES = ['USD', 'TWD', 'CNY', 'EUR'];
     const login = document.querySelector('#login'), loginShell = document.querySelector('#login-shell'), dashboard = document.querySelector('#dashboard'), identity = document.querySelector('#identity');
     const loginError = document.querySelector('#login-error');
     const showLoginError = message => { loginError.textContent = message; loginError.classList.toggle('hidden', !message); };
@@ -126,12 +130,11 @@
       document.querySelector('#forecast-note').textContent = `Forecast from ${data.as_of_date} through ${data.forecast_through}. Overdue obligations are grouped at as-of date; paid and cancelled obligations are excluded.`;
       document.querySelector('#accounts').innerHTML = table(['Account', 'Currency', 'Balance (minor)'], data.accounts.map(a => `<tr>${cell(a.name)}${cell(a.currency)}${cell(number(a.balance_minor))}</tr>`));
       document.querySelector('#opening').innerHTML = table(['Currency', 'Opening balance (minor)', 'Source'], data.opening.map(o => `<tr>${cell(o.currency)}${cell(number(o.opening_minor))}${cell(o.has_account ? 'Bank accounts' : 'No bank account in this currency')}</tr>`));
-      forecast.innerHTML = table(['Currency', 'Date', 'Payables', 'Receivables', 'Net', 'Projected balance'], data.forecast.map(f => {
+      forecast.innerHTML = table(['Currency', 'Date', 'Designation', 'Payables', 'Receivables', 'Net', 'Projected balance'], data.forecast.map(f => {
         const details = (f.details || []).map(d => `${d.type} ${number(d.amount_minor)} ${f.currency}\n${d.label || 'Unlabelled'}\nDue: ${d.due_date}; status: ${d.status}; source: ${d.source_type}${d.designation ? `; designation: ${d.designation}` : ''}${d.counterparty ? `; counterparty: ${d.counterparty}` : ''}`).join('\n\n');
-        return `<tr><td class="tooltip-anchor">${escape(f.currency)}<span class="tooltip" role="tooltip">${escape(details)}</span></td>${cell(f.overdue ? `Overdue as of ${f.due_date}` : f.due_date)}${cell(number(f.payable_minor))}${cell(number(f.receivable_minor))}${cell(number(f.net_minor))}${cell(number(f.projected_balance_minor))}</tr>`;
+        return `<tr><td class="tooltip-anchor">${escape(f.currency)}<span class="tooltip" role="tooltip">${escape(details)}</span></td>${cell(f.overdue ? `Overdue as of ${f.due_date}` : f.due_date)}${cell([...new Set((f.details || []).map(d => d.designation_name).filter(Boolean))].join(', '))}${cell(number(f.payable_minor))}${cell(number(f.receivable_minor))}${cell(number(f.net_minor))}${cell(number(f.projected_balance_minor))}</tr>`;
       }));
       document.querySelector('#designation-select').innerHTML = '<option value="">&mdash;</option>' + (data.designations || []).map(d => `<option value="${escape(d.code)}">${escape(`${d.code} - ${d.name}`)}</option>`).join('');
-      document.querySelector('#currency-options').innerHTML = [...new Set([...data.accounts.map(a => a.currency), ...data.opening.map(o => o.currency)])].filter(Boolean).map(c => `<option value="${escape(c)}">`).join('');
       loginShell.classList.add('hidden'); dashboard.classList.remove('hidden'); identity.classList.remove('hidden');
     }
     async function reload() {
@@ -140,7 +143,7 @@
       try { await load(); } catch (error) { showError(error.message); }
       finally { refresh.disabled = false; refresh.textContent = label; }
     }
-    function showLogin() { login.reset(); hideTooltip(); showError(''); showLoginError(''); loginShell.classList.remove('hidden'); dashboard.classList.add('hidden'); identity.classList.add('hidden'); }
+    function showLogin() { login.reset(); recurring.classList.add('hidden'); hideTooltip(); showError(''); showLoginError(''); loginShell.classList.remove('hidden'); dashboard.classList.add('hidden'); identity.classList.add('hidden'); }
     login.addEventListener('submit', async event => {
       event.preventDefault(); showLoginError('');
       const credentials = Object.fromEntries(new FormData(login));
@@ -153,7 +156,12 @@
       } catch (error) { showLoginError(error.message); }
     });
     document.querySelector('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
-    const recurringForm = document.querySelector('#recurring-form');
+    const recurring = document.querySelector('#recurring'), recurringForm = document.querySelector('#recurring-form');
+    document.querySelector('#currency-select').innerHTML = CURRENCIES.map(c => `<option value="${escape(c)}">${escape(c)}</option>`).join('');
+    document.querySelector('#toggle-recurring').addEventListener('click', () => {
+      recurring.classList.toggle('hidden');
+      if (!recurring.classList.contains('hidden')) recurring.scrollIntoView({ block: 'nearest' });
+    });
     recurringForm.addEventListener('submit', async event => {
       event.preventDefault();
       const submit = document.querySelector('#recurring-submit');

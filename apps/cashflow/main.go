@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -74,6 +75,9 @@ type obligationDetail struct {
 	Status       string `json:"status"`
 	AmountMinor  int64  `json:"amount_minor"`
 	Designation  string `json:"designation"`
+	// DesignationName is the bare name, for the forecast column where the code
+	// adds noise; it falls back to the code when the code table lacks it.
+	DesignationName string `json:"designation_name"`
 }
 
 // designationOption feeds the recurring-payment dropdown: the code is what the
@@ -577,15 +581,16 @@ func buildCashflow(current session, accountRows, transactionRows, obligationRows
 		entry := byDate[key]
 		entry.date, entry.overdue = forecastDate.Format(dateLayout), overdue
 		detail := obligationDetail{
-			ID:           valueOrZero(row["fob_id"]),
-			Label:        stringValue(row["fob_label"]),
-			Counterparty: stringValue(row["fob_counterparty"]),
-			SourceType:   stringValue(row["fob_source_type"]),
-			DueDate:      dueDate,
-			Type:         stringValue(row["fob_type"]),
-			Status:       status,
-			AmountMinor:  amount,
-			Designation:  designationLabel(stringValue(row["fob_designation_code"]), designationNames),
+			ID:              valueOrZero(row["fob_id"]),
+			Label:           stringValue(row["fob_label"]),
+			Counterparty:    stringValue(row["fob_counterparty"]),
+			SourceType:      stringValue(row["fob_source_type"]),
+			DueDate:         dueDate,
+			Type:            stringValue(row["fob_type"]),
+			Status:          status,
+			AmountMinor:     amount,
+			Designation:     designationLabel(stringValue(row["fob_designation_code"]), designationNames),
+			DesignationName: cmp.Or(designationNames[stringValue(row["fob_designation_code"])], stringValue(row["fob_designation_code"])),
 		}
 		switch stringValue(row["fob_type"]) {
 		case "payable":
