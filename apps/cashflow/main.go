@@ -73,6 +73,14 @@ type obligationDetail struct {
 	Type         string `json:"type"`
 	Status       string `json:"status"`
 	AmountMinor  int64  `json:"amount_minor"`
+	Designation  string `json:"designation"`
+}
+
+// designationOption feeds the recurring-payment dropdown: the code is what the
+// obligation stores, the name is what a human recognises.
+type designationOption struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
 }
 
 type forecastEntry struct {
@@ -92,6 +100,22 @@ type currencyOpening struct {
 	HasAccount   bool   `json:"has_account"`
 }
 
+// recurringRequest is one recurring commitment (rent, payroll, a loan
+// installment) the user wants written out as individual obligations.
+type recurringRequest struct {
+	Label        string `json:"label"`
+	Counterparty string `json:"counterparty"`
+	Type         string `json:"type"`
+	SourceType   string `json:"source_type"`
+	AmountMinor  int64  `json:"amount_minor"`
+	Currency     string `json:"currency"`
+	FirstDueDate string `json:"first_due_date"`
+	Designation  string `json:"designation_code"`
+	Period       string `json:"period"`
+	Count        int    `json:"count"`
+	Note         string `json:"note"`
+}
+
 type cashflowResponse struct {
 	User            string            `json:"user"`
 	AsOfDate        string            `json:"as_of_date"`
@@ -99,6 +123,8 @@ type cashflowResponse struct {
 	Accounts        []accountSummary  `json:"accounts"`
 	Opening         []currencyOpening `json:"opening"`
 	Forecast        []forecastEntry   `json:"forecast"`
+	// Designations lists the active codes, so the form offers only usable ones.
+	Designations []designationOption `json:"designations"`
 }
 
 func main() {
@@ -131,6 +157,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /login", a.handleLogin)
 	mux.HandleFunc("POST /logout", a.handleLogout)
 	mux.HandleFunc("GET /api/cashflow", a.handleCashflow)
+	mux.HandleFunc("POST /api/recurring", a.handleRecurring)
 	return mux
 }
 
@@ -226,28 +253,172 @@ func (a *app) handleCashflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accounts, status, err := a.listRows(r.Context(), "bank_accounts", "bnk_id", current.token)
-	if err == nil {
-		transactions, transactionStatus, transactionErr := a.listRows(r.Context(), "bank_transactions", "btx_id", current.token)
-		if transactionErr == nil {
-			obligations, obligationStatus, obligationErr := a.listRows(r.Context(), "financial_obligations", "fob_id", current.token)
-			if obligationErr == nil {
-				writeJSON(w, http.StatusOK, buildCashflow(current, accounts, transactions, obligations, asOf, through))
+	tables := [][2]string{{"bank_accounts", "bnk_id"}, {"bank_transactions", "btx_id"}, {"financial_obligations", "fob_id"}, {"designation_codes", "dsg_id"}}
+	loaded := make([][]map[string]any, len(tables))
+	for index, table := range tables {
+		rows, status, err := a.listRows(r.Context(), table[0], table[1], current.token)
+		if err != nil {
+			if status == http.StatusUnauthorized {
+				a.mu.Lock()
+				delete(a.sessions, appToken)
+				a.mu.Unlock()
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "StockIt session expired; log in again"})
 				return
 			}
-			status, err = obligationStatus, obligationErr
-		} else {
-			status, err = transactionStatus, transactionErr
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "StockIt data request failed"})
+			return
 		}
+		loaded[index] = rows
 	}
-	if status == http.StatusUnauthorized {
-		a.mu.Lock()
-		delete(a.sessions, appToken)
-		a.mu.Unlock()
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "StockIt session expired; log in again"})
+	writeJSON(w, http.StatusOK, buildCashflow(current, loaded[0], loaded[1], loaded[2], loaded[3], asOf, through))
+}
+
+// monthsPerPeriod keeps the recurrence rules to whole-month steps, which is what
+// rent, payroll and installment plans actually use.
+var monthsPerPeriod = map[string]int{"weekly": 0, "monthly": 1, "quarterly": 3, "yearly": 12}
+
+const maxRecurringCount = 60
+
+func (a *app) handleRecurring(w http.ResponseWriter, r *http.Request) {
+	appToken, current, ok := a.sessionFromRequest(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
 		return
 	}
-	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "StockIt data request failed"})
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	var request recurringRequest
+	if err := json.UnmarshalRead(r.Body, &request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	dates, err := recurringDates(request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// ponytail: rows are created one by one with no transaction, so a mid-run
+	// failure leaves the earlier ones in place; the response says how many
+	// landed. Add a StockIt bulk endpoint if partial writes become a problem.
+	created := 0
+	for _, due := range dates {
+		row := map[string]any{
+			"fob_type":             request.Type,
+			"fob_source_type":      request.SourceType,
+			"fob_label":            strings.TrimSpace(request.Label),
+			"fob_due_date":         due,
+			"fob_amount_minor":     request.AmountMinor,
+			"fob_currency":         strings.TrimSpace(request.Currency),
+			"fob_status":           "planned",
+			"fob_counterparty":     strings.TrimSpace(request.Counterparty),
+			"fob_designation_code": nilIfEmpty(strings.TrimSpace(request.Designation)),
+			"fob_note":             strings.TrimSpace(request.Note),
+		}
+		status, err := a.createRow(r.Context(), "financial_obligations", current.token, row)
+		if err == nil {
+			created++
+			continue
+		}
+		if status == http.StatusUnauthorized {
+			a.mu.Lock()
+			delete(a.sessions, appToken)
+			a.mu.Unlock()
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "StockIt session expired; log in again"})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{"created": created, "error": fmt.Sprintf("StockIt rejected the obligation due %s (%d); %d of %d created", due, status, created, len(dates))})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"created": created, "first_due_date": dates[0], "last_due_date": dates[len(dates)-1]})
+}
+
+// recurringDates validates the request and returns one due date per installment.
+func recurringDates(request recurringRequest) ([]string, error) {
+	if strings.TrimSpace(request.Label) == "" {
+		return nil, fmt.Errorf("label is required")
+	}
+	if request.Type != "payable" && request.Type != "receivable" {
+		return nil, fmt.Errorf("type must be payable or receivable")
+	}
+	if strings.TrimSpace(request.Currency) == "" {
+		return nil, fmt.Errorf("currency is required")
+	}
+	if request.AmountMinor <= 0 {
+		return nil, fmt.Errorf("amount_minor must be positive")
+	}
+	if request.Count < 1 || request.Count > maxRecurringCount {
+		return nil, fmt.Errorf("count must be between 1 and %d", maxRecurringCount)
+	}
+	months, ok := monthsPerPeriod[request.Period]
+	if !ok {
+		return nil, fmt.Errorf("period must be weekly, monthly, quarterly or yearly")
+	}
+	first, err := time.Parse(dateLayout, request.FirstDueDate)
+	if err != nil {
+		return nil, fmt.Errorf("first_due_date must use YYYY-MM-DD")
+	}
+	dates := make([]string, 0, request.Count)
+	for index := range request.Count {
+		if months == 0 {
+			dates = append(dates, first.AddDate(0, 0, 7*index).Format(dateLayout))
+			continue
+		}
+		dates = append(dates, addMonths(first, months*index).Format(dateLayout))
+	}
+	return dates, nil
+}
+
+// addMonths steps whole months and clamps to the last day of the target month,
+// so a payment due on the 31st stays month-end instead of rolling into the next
+// month the way time.AddDate normalises it.
+func addMonths(date time.Time, months int) time.Time {
+	target := time.Date(date.Year(), date.Month(), 1, 0, 0, 0, 0, date.Location()).AddDate(0, months, 0)
+	lastDay := target.AddDate(0, 1, -1).Day()
+	return time.Date(target.Year(), target.Month(), min(date.Day(), lastDay), 0, 0, 0, 0, date.Location())
+}
+
+// nilIfEmpty keeps an unset optional column NULL instead of an empty string.
+func nilIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// createRow posts one row to a StockIt table with the session's bearer token.
+func (a *app) createRow(ctx context.Context, table, token string, row map[string]any) (int, error) {
+	body, err := json.Marshal(row)
+	if err != nil {
+		return 0, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.stockitURL+"/api/tables/"+table, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := a.client.Do(request)
+	if err != nil {
+		return http.StatusBadGateway, err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+		return response.StatusCode, fmt.Errorf("StockIt %s create returned %d", table, response.StatusCode)
+	}
+	return response.StatusCode, nil
+}
+
+// designationLabel renders a stored code with its name, falling back to the bare
+// code when the code table no longer has it.
+func designationLabel(code string, names map[string]string) string {
+	if code == "" {
+		return ""
+	}
+	if name := names[code]; name != "" {
+		return code + " - " + name
+	}
+	return code
 }
 
 func reportDates(r *http.Request) (time.Time, time.Time, error) {
@@ -322,7 +493,8 @@ func (a *app) listRows(ctx context.Context, table, primaryKey, token string) ([]
 	}
 }
 
-func buildCashflow(current session, accountRows, transactionRows, obligationRows []map[string]any, asOf, through time.Time) cashflowResponse {
+func buildCashflow(current session, accountRows, transactionRows, obligationRows, designationRows []map[string]any, asOf, through time.Time) cashflowResponse {
+	designationNames := make(map[string]string, len(designationRows))
 	type account struct {
 		id       int64
 		name     string
@@ -347,6 +519,17 @@ func buildCashflow(current session, accountRows, transactionRows, obligationRows
 	}
 
 	result := cashflowResponse{User: current.user, AsOfDate: asOf.Format(dateLayout), ForecastThrough: through.Format(dateLayout)}
+	for _, row := range designationRows {
+		code, name := stringValue(row["dsg_code"]), stringValue(row["dsg_name"])
+		if code == "" {
+			continue
+		}
+		designationNames[code] = name
+		if status := stringValue(row["dsg_status"]); status == "" || status == "Active" {
+			result.Designations = append(result.Designations, designationOption{Code: code, Name: name})
+		}
+	}
+	sort.Slice(result.Designations, func(i, j int) bool { return result.Designations[i].Code < result.Designations[j].Code })
 	balances := make(map[string]int64)
 	for _, account := range accounts {
 		result.Accounts = append(result.Accounts, accountSummary{ID: account.id, Name: account.name, Currency: account.currency, BalanceMinor: account.balance})
@@ -402,6 +585,7 @@ func buildCashflow(current session, accountRows, transactionRows, obligationRows
 			Type:         stringValue(row["fob_type"]),
 			Status:       status,
 			AmountMinor:  amount,
+			Designation:  designationLabel(stringValue(row["fob_designation_code"]), designationNames),
 		}
 		switch stringValue(row["fob_type"]) {
 		case "payable":

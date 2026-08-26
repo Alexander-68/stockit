@@ -27,7 +27,7 @@
     #login label { margin-top: 1rem; }
     section > *:last-child { margin-bottom: 0; } #error { min-height: 0; margin: 0 0 1rem; } #error:empty { display: none; } .muted { color: #667085; } .hidden, .print-only { display: none; }
     .tooltip-anchor { position: relative; } .tooltip { display: none; position: fixed; z-index: 1; min-width: 22rem; max-width: 34rem; padding: .75rem; border: 1px solid #9da9bc; border-radius: .5rem; background: #fff; box-shadow: 0 4px 18px #17203333; color: #172033; font-size: 1rem; font-weight: 400; line-height: 1.45; pointer-events: none; text-align: left; white-space: pre-line; }
-    @media print { body { max-width: none; padding: 0; background: white; } header, section, #dates { border: 0; box-shadow: none; padding: 0; } button, #login-shell, #identity, .controls, .tooltip { display: none !important; } .print-only { display: block; } }
+    @media print { body { max-width: none; padding: 0; background: white; } header, section, #dates { border: 0; box-shadow: none; padding: 0; } button, #login-shell, #identity, .controls, .tooltip, #recurring { display: none !important; } .print-only { display: block; } }
   </style>
 </head>
 <body class="stockit-app-shell">
@@ -53,10 +53,31 @@
       <p id="print-dates" class="print-only"></p>
     </section>
     <section><h2>Current bank balances</h2><p id="balance-note" class="muted">Amounts are StockIt integer minor units.</p><div id="accounts"></div></section>
+    <section id="recurring">
+      <div class="section-head"><h2>Add recurring payment</h2><span id="recurring-result" class="muted"></span></div>
+      <p class="muted">Rent, payroll or any other repeating commitment. Each installment is written as its own planned obligation, so a later change is an ordinary edit of the rows it affects.</p>
+      <form id="recurring-form">
+        <div class="grid">
+          <label>Label<input name="label" required placeholder="Office rent"></label>
+          <label>Counterparty<input name="counterparty" placeholder="Landlord"></label>
+          <label>Direction<select name="type"><option value="payable">payable</option><option value="receivable">receivable</option></select></label>
+          <label>Source<select name="source_type"><option value="other">other</option><option value="payroll">payroll</option><option value="invoice">invoice</option><option value="purchase_order">purchase_order</option><option value="sales_order">sales_order</option></select></label>
+          <label>Amount (minor)<input name="amount_minor" type="number" step="1" min="1" required></label>
+          <label>Currency<input name="currency" list="currency-options" required></label>
+          <label>Designation<select name="designation_code" id="designation-select"><option value="">&mdash;</option></select></label>
+          <label>First due date<input name="first_due_date" type="date" required></label>
+          <label>Period<select name="period"><option value="monthly">monthly</option><option value="weekly">weekly</option><option value="quarterly">quarterly</option><option value="yearly">yearly</option></select></label>
+          <label>Installments<input name="count" type="number" step="1" min="1" max="60" value="12" required></label>
+        </div>
+        <datalist id="currency-options"></datalist>
+        <label>Note<input name="note"></label>
+        <div class="controls"><button id="recurring-submit">Create installments</button><span id="recurring-error" class="error" style="margin:0"></span></div>
+      </form>
+    </section>
     <section><h2>Open obligations</h2><p id="forecast-note" class="muted">Paid and cancelled obligations are excluded.</p><p class="muted">The forecast starts from these opening balances:</p><div id="opening"></div><div id="forecast"></div></section>
   </main>
   <script>
-    const VERSION = '1.0.260825';
+    const VERSION = '1.0.260826';
     const login = document.querySelector('#login'), loginShell = document.querySelector('#login-shell'), dashboard = document.querySelector('#dashboard'), identity = document.querySelector('#identity');
     const loginError = document.querySelector('#login-error');
     const showLoginError = message => { loginError.textContent = message; loginError.classList.toggle('hidden', !message); };
@@ -106,9 +127,11 @@
       document.querySelector('#accounts').innerHTML = table(['Account', 'Currency', 'Balance (minor)'], data.accounts.map(a => `<tr>${cell(a.name)}${cell(a.currency)}${cell(number(a.balance_minor))}</tr>`));
       document.querySelector('#opening').innerHTML = table(['Currency', 'Opening balance (minor)', 'Source'], data.opening.map(o => `<tr>${cell(o.currency)}${cell(number(o.opening_minor))}${cell(o.has_account ? 'Bank accounts' : 'No bank account in this currency')}</tr>`));
       forecast.innerHTML = table(['Currency', 'Date', 'Payables', 'Receivables', 'Net', 'Projected balance'], data.forecast.map(f => {
-        const details = (f.details || []).map(d => `${d.type} ${number(d.amount_minor)} ${f.currency}\n${d.label || 'Unlabelled'}\nDue: ${d.due_date}; status: ${d.status}; source: ${d.source_type}${d.counterparty ? `; counterparty: ${d.counterparty}` : ''}`).join('\n\n');
+        const details = (f.details || []).map(d => `${d.type} ${number(d.amount_minor)} ${f.currency}\n${d.label || 'Unlabelled'}\nDue: ${d.due_date}; status: ${d.status}; source: ${d.source_type}${d.designation ? `; designation: ${d.designation}` : ''}${d.counterparty ? `; counterparty: ${d.counterparty}` : ''}`).join('\n\n');
         return `<tr><td class="tooltip-anchor">${escape(f.currency)}<span class="tooltip" role="tooltip">${escape(details)}</span></td>${cell(f.overdue ? `Overdue as of ${f.due_date}` : f.due_date)}${cell(number(f.payable_minor))}${cell(number(f.receivable_minor))}${cell(number(f.net_minor))}${cell(number(f.projected_balance_minor))}</tr>`;
       }));
+      document.querySelector('#designation-select').innerHTML = '<option value="">&mdash;</option>' + (data.designations || []).map(d => `<option value="${escape(d.code)}">${escape(`${d.code} - ${d.name}`)}</option>`).join('');
+      document.querySelector('#currency-options').innerHTML = [...new Set([...data.accounts.map(a => a.currency), ...data.opening.map(o => o.currency)])].filter(Boolean).map(c => `<option value="${escape(c)}">`).join('');
       loginShell.classList.add('hidden'); dashboard.classList.remove('hidden'); identity.classList.remove('hidden');
     }
     async function reload() {
@@ -130,6 +153,27 @@
       } catch (error) { showLoginError(error.message); }
     });
     document.querySelector('#logout').addEventListener('click', async () => { await fetch('/logout', {method: 'POST'}); showLogin(); });
+    const recurringForm = document.querySelector('#recurring-form');
+    recurringForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const submit = document.querySelector('#recurring-submit');
+      document.querySelector('#recurring-error').textContent = '';
+      document.querySelector('#recurring-result').textContent = '';
+      const payload = Object.fromEntries(new FormData(recurringForm));
+      payload.amount_minor = Number(payload.amount_minor);
+      payload.count = Number(payload.count);
+      submit.disabled = true;
+      try {
+        const response = await fetch('/api/recurring', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+        if (response.status === 401) { showLogin(); return; }
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to create installments');
+        document.querySelector('#recurring-result').textContent = `Created ${data.created} obligations, ${data.first_due_date} through ${data.last_due_date}.`;
+        recurringForm.reset();
+        await reload();
+      } catch (error) { document.querySelector('#recurring-error').textContent = error.message; }
+      finally { submit.disabled = false; }
+    });
     refresh.addEventListener('click', reload);
     document.querySelector('#print').addEventListener('click', () => window.print());
     load().catch(() => showLogin());

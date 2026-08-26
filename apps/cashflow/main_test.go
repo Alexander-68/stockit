@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,20 @@ func TestCashflowUsesServerSideStockItToken(t *testing.T) {
 				return
 			}
 			writeJSON(w, http.StatusOK, tableRowsResponse{Rows: []map[string]any{{"bnk_id": int64(1), "btx_date": "2026-08-01", "btx_amount_minor": int64(10000)}, {"bnk_id": int64(1), "btx_date": "2026-08-12", "btx_amount_minor": int64(-2500)}, {"bnk_id": int64(1), "btx_date": "2026-09-02", "btx_amount_minor": int64(3000)}}})
+		case "/api/tables/designation_codes":
+			if !requireBearer(t, w, r) {
+				return
+			}
+			writeJSON(w, http.StatusOK, tableRowsResponse{Rows: []map[string]any{
+				{"dsg_id": int64(9), "dsg_code": "RENT", "dsg_name": "Rent", "dsg_status": "Active"},
+				{"dsg_id": int64(10), "dsg_code": "OLD_FEE", "dsg_name": "Retired fee", "dsg_status": "Inactive"},
+			}})
 		case "/api/tables/financial_obligations":
 			if !requireBearer(t, w, r) {
 				return
 			}
 			writeJSON(w, http.StatusOK, tableRowsResponse{Rows: []map[string]any{
-				{"fob_id": int64(41), "fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-08-10", "fob_amount_minor": int64(200), "fob_label": "Overdue rent", "fob_counterparty": "Landlord", "fob_source_type": "other"},
+				{"fob_id": int64(41), "fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-08-10", "fob_amount_minor": int64(200), "fob_label": "Overdue rent", "fob_counterparty": "Landlord", "fob_source_type": "other", "fob_designation_code": "RENT"},
 				{"fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-08-24", "fob_amount_minor": int64(300)},
 				{"fob_type": "payable", "fob_status": "due", "fob_currency": "USD", "fob_due_date": "2026-09-01", "fob_amount_minor": int64(1000)},
 				{"fob_type": "receivable", "fob_status": "planned", "fob_currency": "USD", "fob_due_date": "2026-09-02", "fob_amount_minor": int64(500)},
@@ -210,5 +219,141 @@ func TestAssetsProxyIsPublic(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "stockit-login-card") {
 		t.Fatalf("assets proxy did not forward StockIt CSS: %s", body)
+	}
+}
+
+func TestRecurringDates(t *testing.T) {
+	valid := recurringRequest{Label: "Office rent", Type: "payable", Currency: "USD", AmountMinor: 250000, FirstDueDate: "2026-01-31", Period: "monthly", Count: 3}
+	dates, err := recurringDates(valid)
+	if err != nil {
+		t.Fatalf("valid request rejected: %v", err)
+	}
+	// A month-end start must stay at month end instead of rolling into March.
+	if want := []string{"2026-01-31", "2026-02-28", "2026-03-31"}; !slices.Equal(dates, want) {
+		t.Fatalf("monthly dates = %v, want %v", dates, want)
+	}
+
+	weekly := valid
+	weekly.Period, weekly.FirstDueDate = "weekly", "2026-01-01"
+	dates, err = recurringDates(weekly)
+	if err != nil {
+		t.Fatalf("weekly request rejected: %v", err)
+	}
+	if want := []string{"2026-01-01", "2026-01-08", "2026-01-15"}; !slices.Equal(dates, want) {
+		t.Fatalf("weekly dates = %v, want %v", dates, want)
+	}
+
+	for name, mutate := range map[string]func(*recurringRequest){
+		"blank label":   func(r *recurringRequest) { r.Label = "  " },
+		"bad type":      func(r *recurringRequest) { r.Type = "donation" },
+		"no currency":   func(r *recurringRequest) { r.Currency = "" },
+		"zero amount":   func(r *recurringRequest) { r.AmountMinor = 0 },
+		"count too big": func(r *recurringRequest) { r.Count = maxRecurringCount + 1 },
+		"bad period":    func(r *recurringRequest) { r.Period = "fortnightly" },
+		"bad date":      func(r *recurringRequest) { r.FirstDueDate = "31/01/2026" },
+	} {
+		invalid := valid
+		mutate(&invalid)
+		if _, err := recurringDates(invalid); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+func TestRecurringCreatesOneRowPerInstallment(t *testing.T) {
+	var created []map[string]any
+	stockit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/login":
+			writeJSON(w, http.StatusOK, map[string]string{"token": "stockit-token", "user": "alex"})
+		case "/api/tables/financial_obligations":
+			if got := r.Header.Get("Authorization"); got != "Bearer stockit-token" {
+				t.Errorf("Authorization = %q", got)
+			}
+			var row map[string]any
+			if err := json.UnmarshalRead(r.Body, &row); err != nil {
+				t.Errorf("decode row: %v", err)
+			}
+			created = append(created, row)
+			writeJSON(w, http.StatusCreated, map[string]any{"row": row})
+		default:
+			t.Errorf("unexpected StockIt request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer stockit.Close()
+	appServer := httptest.NewServer(newApp(stockit.URL, stockit.Client()).handler())
+	defer appServer.Close()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Post(appServer.URL+"/login", "application/json", strings.NewReader(`{"login_name":"alex","password":"secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+
+	body := `{"label":"Office rent","counterparty":"Landlord","type":"payable","source_type":"other","amount_minor":250000,"currency":"USD","designation_code":"RENT","first_due_date":"2026-03-01","period":"monthly","count":3}`
+	response, err = client.Post(appServer.URL+"/api/recurring", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("recurring returned %d, want 200", response.StatusCode)
+	}
+	if len(created) != 3 {
+		t.Fatalf("created %d obligations, want 3", len(created))
+	}
+	if got := created[2]["fob_due_date"]; got != "2026-05-01" {
+		t.Errorf("third due date = %v, want 2026-05-01", got)
+	}
+	if got := created[0]["fob_status"]; got != "planned" {
+		t.Errorf("status = %v, want planned", got)
+	}
+	if got := created[0]["fob_designation_code"]; got != "RENT" {
+		t.Errorf("designation = %v, want RENT", got)
+	}
+}
+
+func TestCashflowLabelsDesignationsAndListsActiveCodes(t *testing.T) {
+	names := map[string]string{"RENT": "Rent"}
+	if got := designationLabel("RENT", names); got != "RENT - Rent" {
+		t.Errorf("known code = %q, want \"RENT - Rent\"", got)
+	}
+	// A code the table no longer carries still has to render, or the obligation
+	// looks like it has no designation at all.
+	if got := designationLabel("GONE", names); got != "GONE" {
+		t.Errorf("unknown code = %q, want \"GONE\"", got)
+	}
+	if got := designationLabel("", names); got != "" {
+		t.Errorf("blank code = %q, want empty", got)
+	}
+
+	designations := []map[string]any{
+		{"dsg_code": "RENT", "dsg_name": "Rent", "dsg_status": "Active"},
+		{"dsg_code": "OLD_FEE", "dsg_name": "Retired fee", "dsg_status": "Inactive"},
+		{"dsg_code": "LEGACY", "dsg_name": "No status"},
+		{"dsg_name": "No code"},
+	}
+	result := buildCashflow(session{user: "alex"}, nil, nil, nil, designations, time.Now(), time.Now())
+	if want := []designationOption{{Code: "LEGACY", Name: "No status"}, {Code: "RENT", Name: "Rent"}}; !slices.Equal(result.Designations, want) {
+		t.Fatalf("designations = %+v, want %+v", result.Designations, want)
+	}
+}
+
+func TestRecurringRequiresLogin(t *testing.T) {
+	appServer := httptest.NewServer(newApp("http://127.0.0.1:1", http.DefaultClient).handler())
+	defer appServer.Close()
+	response, err := http.Post(appServer.URL+"/api/recurring", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous recurring returned %d, want 401", response.StatusCode)
 	}
 }

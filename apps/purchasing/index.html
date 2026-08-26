@@ -141,11 +141,12 @@
       <p class="muted">Payable obligations for this PO. Amounts are integer minor units.</p>
       <div id="schedule"></div>
       <form id="schedule-form">
-        <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody><tr>
+        <table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Designation</th><th>Status</th><th></th></tr></thead><tbody><tr>
           <td><input name="fob_label" required></td>
           <td><input name="fob_due_date" type="date" required></td>
           <td class="num"><input name="fob_amount_minor" type="number" step="1" min="1" required></td>
           <td><select name="fob_currency" class="currency-select"></select></td>
+          <td><select name="fob_designation_code" class="designation-select"></select></td>
           <td><select name="fob_status" class="obligation-status-select"></select></td>
           <td><button>Add installment</button></td>
         </tr></tbody></table>
@@ -214,7 +215,12 @@
 
     let suppliers = [], items = [], orders = [], currentPO = null, currentSupplier = null;
     let lines = [], schedule = [], priceList = {}, orderTotals = {};
-    let poHistory = [], approvalLimitMinor = 0, userNames = {};
+    let poHistory = [], approvalLimitMinor = 0, userNames = {}, designations = [];
+
+    // Designation codes come from StockIt's designation_codes table; the dropdown
+    // shows "CODE - Name" but stores the code, which is what the column holds.
+    const designationOptions = selected => '<option value="">&mdash;</option>' + designations
+      .map(d => `<option value="${escape(d.dsg_code)}"${d.dsg_code === selected ? ' selected' : ''}>${escape(`${d.dsg_code} - ${d.dsg_name}`)}</option>`).join('');
 
     // StockIt records who changed a status as a user id; this maps it to the
     // login name for display. An unknown id falls back to "#id".
@@ -558,12 +564,13 @@
       renderSchedule();
     }
     function renderSchedule() {
-      $('#schedule').innerHTML = schedule.length ? `<table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody>${
+      $('#schedule').innerHTML = schedule.length ? `<table><thead><tr><th>Label</th><th>Due date</th><th class="num">Amount (minor)</th><th>Currency</th><th>Designation</th><th>Status</th><th></th></tr></thead><tbody>${
         schedule.map((fob, index) => `<tr>
           <td><input data-index="${index}" data-field="fob_label" value="${escape(fob.fob_label)}"></td>
           <td><input data-index="${index}" data-field="fob_due_date" type="date" value="${escape(fob.fob_due_date)}"></td>
           <td class="num"><input data-index="${index}" data-field="fob_amount_minor" type="number" step="1" value="${fob.fob_amount_minor ?? ''}"></td>
           <td><select data-index="${index}" data-field="fob_currency">${options(CURRENCIES, fob.fob_currency)}</select></td>
+          <td><select data-index="${index}" data-field="fob_designation_code">${designationOptions(fob.fob_designation_code)}</select></td>
           <td><select data-index="${index}" data-field="fob_status">${options(OBLIGATION_STATUSES, fob.fob_status)}</select></td>
           <td><button class="secondary" data-save-fob="${index}" type="button">Save</button> <button class="danger" data-delete-fob="${index}" type="button">Delete</button></td>
         </tr>`).join('')
@@ -571,15 +578,19 @@
       const totals = sumByCurrency(schedule.filter(fob => fob.fob_status !== 'cancelled'), fob => fob.fob_currency, fob => fob.fob_amount_minor || 0);
       $('#schedule-totals').textContent = Object.keys(totals).length ? 'Scheduled (excluding cancelled): ' + Object.entries(totals).map(([currency, total]) => `${number(total)} ${currency} minor`).join('; ') : '';
     }
-    $('#schedule').addEventListener('input', event => {
+    // Designation and currency are selects, so listen for change as well as input.
+    $('#schedule').addEventListener('change', event => applyScheduleEdit(event));
+    $('#schedule').addEventListener('input', event => applyScheduleEdit(event));
+    function applyScheduleEdit(event) {
       const { index, field } = event.target.dataset;
-      if (index != null) schedule[index][field] = event.target.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value;
-    });
+      if (index != null) schedule[index][field] = event.target.type === 'number' ? (event.target.value === '' ? null : Number(event.target.value)) : (event.target.value || null);
+    }
     function obligationPayload(fob) {
       return {
         fob_type: 'payable', fob_source_type: 'purchase_order', fob_source_id: currentPO.por_id,
         fob_label: fob.fob_label, fob_due_date: fob.fob_due_date, fob_amount_minor: fob.fob_amount_minor,
         fob_currency: fob.fob_currency, fob_status: fob.fob_status, fob_counterparty: supplierName(currentPO.sup_id) || null,
+        fob_designation_code: fob.fob_designation_code || null,
       };
     }
     $('#schedule').addEventListener('click', async event => {
@@ -603,7 +614,7 @@
         await api('POST', '/api/tables/financial_obligations', obligationPayload({
           fob_label: form.fob_label.value, fob_due_date: form.fob_due_date.value,
           fob_amount_minor: Number(form.fob_amount_minor.value), fob_currency: form.fob_currency.value,
-          fob_status: form.fob_status.value,
+          fob_status: form.fob_status.value, fob_designation_code: form.fob_designation_code.value,
         }));
         form.fob_label.value = ''; form.fob_due_date.value = ''; form.fob_amount_minor.value = '';
         await loadSchedule();
@@ -882,6 +893,9 @@
       $('#filter-from').value = defaultFrom();
       for (const select of document.querySelectorAll('.currency-select')) select.innerHTML = options(CURRENCIES, 'USD');
       for (const select of document.querySelectorAll('.obligation-status-select')) select.innerHTML = options(OBLIGATION_STATUSES, 'planned');
+      // Advisory: without the codes the designation dropdown is just the blank option.
+      try { designations = await listAll('designation_codes', { sort: 'dsg_code' }); } catch { designations = []; }
+      for (const select of document.querySelectorAll('.designation-select')) select.innerHTML = designationOptions('');
       $('#filter-payment').innerHTML = '<option value="">All payment tags</option>' + options(PAYMENT_STATUSES);
       // Advisory: without the name map the history falls back to showing "#id".
       try {

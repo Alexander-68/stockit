@@ -911,6 +911,7 @@ func (s *Store) init(ctx context.Context) error {
 			fob_currency TEXT NOT NULL,
 			fob_status TEXT NOT NULL,
 			fob_counterparty TEXT,
+			fob_designation_code TEXT,
 			fob_note TEXT,
 			usr_id INTEGER,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -986,6 +987,10 @@ func (s *Store) init(ctx context.Context) error {
 		{table: "purchase_orders", column: "por_currency", def: "TEXT"},
 		{table: "purchase_orders", column: "por_total_minor", def: "INTEGER"},
 		{table: "users", column: "usr_approval_limit_minor", def: "INTEGER"},
+		// ponytail: fob_designation_code carries no FK to designation_codes because
+		// ALTER TABLE ADD COLUMN cannot add one; a fresh database would then differ
+		// from a migrated one. Rebuild the table if the constraint becomes worth it.
+		{table: "financial_obligations", column: "fob_designation_code", def: "TEXT"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.def); err != nil {
 			return err

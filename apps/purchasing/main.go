@@ -33,6 +33,7 @@ var tableMethods = map[string]string{
 	"po_status_history":     "GET",
 	"po_components":         "GET POST PUT DELETE",
 	"financial_obligations": "GET POST PUT DELETE",
+	"designation_codes":     "GET",
 }
 
 type app struct {
