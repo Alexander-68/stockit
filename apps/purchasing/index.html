@@ -54,7 +54,7 @@
 <body class="stockit-app-shell">
   <header>
     <div><h1>Purchasing</h1><p class="version" id="version"></p></div>
-    <nav id="nav" class="controls hidden"><button data-view="list" type="button">Purchase orders</button><button data-view="suppliers" type="button">Suppliers</button></nav>
+    <nav id="nav" class="controls hidden"><button data-view="list" type="button">Purchase orders</button><button data-view="suppliers" type="button">Suppliers</button><button id="prev-record" class="secondary hidden" type="button">&#9664; Prev</button><button id="next-record" class="secondary hidden" type="button">Next &#9654;</button></nav>
     <div id="identity" class="hidden"><span id="user"></span> <button id="logout" class="secondary">Log out</button></div>
   </header>
 
@@ -260,7 +260,9 @@
     const lineTotals = rows => sumByCurrency(rows, l => l.poc_currency, l => (l.poc_qty || 0) * (l.poc_price || 0));
 
     // --- views ---
+    let currentView = 'login';
     function show(view) {
+      currentView = view;
       $('#login-shell').classList.toggle('hidden', view !== 'login');
       $('#list-view').classList.toggle('hidden', view !== 'list');
       $('#edit-view').classList.toggle('hidden', view !== 'edit');
@@ -273,7 +275,29 @@
           (button.dataset.view === 'list' && (view === 'list' || view === 'edit'))
           || (button.dataset.view === 'suppliers' && view.startsWith('supplier')));
       }
+      updateRecordNav();
     }
+
+    // Prev/Next walk the rendered list in the order it is on screen, so they
+    // follow the active filters and sort without keeping a second copy of it.
+    function updateRecordNav() {
+      const table = currentView === 'edit' ? '#po-table' : currentView === 'supplier-edit' ? '#supplier-table' : null;
+      const id = currentView === 'edit' ? currentPO?.por_id : currentSupplier?.sup_id;
+      const ids = table ? [...document.querySelectorAll(`${table} tbody tr[data-id]`)].map(row => Number(row.dataset.id)) : [];
+      const index = id == null ? -1 : ids.indexOf(id);
+      for (const [selector, step] of [['#prev-record', -1], ['#next-record', 1]]) {
+        const target = index < 0 ? undefined : ids[index + step];
+        const button = $(selector);
+        button.classList.toggle('hidden', !table);
+        button.disabled = target == null;
+        button.dataset.target = target ?? '';
+      }
+    }
+    for (const selector of ['#prev-record', '#next-record']) $(selector).addEventListener('click', event => {
+      const target = Number(event.currentTarget.dataset.target);
+      if (target) (currentView === 'edit' ? openPO : openSupplier)(target);
+    });
+
     function showLogin() { $('#login').reset(); $('#login-error').classList.add('hidden'); show('login'); }
 
     // --- purchase order list ---
