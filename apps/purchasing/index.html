@@ -219,8 +219,8 @@
     // StockIt records who changed a status as a user id; this maps it to the
     // login name for display. An unknown id falls back to "#id".
     const userName = id => (id == null || id === '') ? '' : (userNames[id] || `#${id}`);
-    // Status values are snake_case on the wire; print them as a sentence.
-    const statusLabel = status => String(status || '').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+    // Status and payment values are snake_case on the wire; print them as words.
+    const words = value => String(value || '').replace(/_/g, ' ');
 
     // whoDid returns the user who most recently moved the order into a status,
     // reading the history newest-first.
@@ -763,10 +763,21 @@
 
     // --- print ---
     // Issued by: whoever moved the order to issued, falling back to whoever
-    // drafted it, because a small order is often never formally issued. The
-    // printed line is dropped when the status line already says the same thing.
+    // drafted it, because a small order is often never formally issued.
     function issuedBy() {
       return whoDid('issued') || userName(currentPO?.usr_id) || 'unknown';
+    }
+
+    // The printed order carries who stands behind it, not the internal status
+    // name. "Approved by" appears only once someone has actually approved, so a
+    // rejected or still-draft order never claims otherwise.
+    function printMeta(po) {
+      const approver = whoDid('approved');
+      return [
+        `Issued by ${issuedBy()}`,
+        approver ? `Approved by ${approver}` : '',
+        `Payment: ${words(po.por_payment_status || 'unpaid')}`,
+      ].filter(Boolean).join('. ') + '.';
     }
 
     $('#print').addEventListener('click', () => {
@@ -774,10 +785,7 @@
       const totals = lineTotals(lines);
       $('#print-view').innerHTML = `
         <h1>Purchase Order ${escape(po.por_doc_number)}</h1>
-        <p class="muted">Status: ${escape(statusLabel(po.por_status))}${
-          whoDid(po.por_status) ? ` by ${escape(whoDid(po.por_status))}` : ''
-        } &middot; Payment: ${escape(statusLabel(po.por_payment_status || 'unpaid'))}</p>
-        ${po.por_status === 'issued' && whoDid('issued') === issuedBy() ? '' : `<p class="muted">Issued by ${escape(issuedBy())}</p>`}
+        <p class="muted">${escape(printMeta(po))}</p>
         <div class="print-meta">
           <div><h3>Supplier</h3>${supplier ? `${escape(supplier.sup_name_en || '')}<br>${escape(supplier.sup_address_en || '')}<br>${escape(supplier.sup_contact_name || '')} ${escape(supplier.sup_contact_phone || '')}<br>${escape(supplier.sup_contact_email || '')}` : '<span class="muted">No supplier selected</span>'}</div>
           <div><h3>Dates</h3>Doc date: ${escape(po.por_doc_date || '-')}<br>Ship date: ${escape(po.por_ship_date || '-')}<br>Paid date: ${escape(po.por_paid_date || '-')}</div>
